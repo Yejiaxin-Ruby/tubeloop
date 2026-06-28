@@ -1,0 +1,12 @@
+.env
+*.sqlite3
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.codex/
+.agents/
+apple_agent_history.json
+output/
+tmp/
+hello_app/.env

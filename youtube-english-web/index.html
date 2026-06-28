@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube 英语学习语料库</title>
+    <script>
+      document.write(
+        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=no-line-plus-1" />`,
+      );
+    </script>
+  </head>
+  <body>
+    <div class="studio-shell">
+      <header class="import-strip">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">YT</span>
+          <div>
+            <h1>YouTube 英语学习语料库</h1>
+            <p>导入视频，完成字幕学习、口语讨论和表达沉淀</p>
+          </div>
+        </div>
+
+        <nav class="global-nav" aria-label="全局入口">
+          <button class="global-tab" type="button" data-view="history">历史视频</button>
+          <button class="global-tab" type="button" data-view="library">表达库</button>
+        </nav>
+
+        <form class="import-bar" id="importForm">
+          <label class="sr-only" for="videoUrl">YouTube 视频链接</label>
+          <input
+            id="videoUrl"
+            type="url"
+            value="https://www.youtube.com/watch?v=mock-english-thinking"
+            placeholder="粘贴 1 小时以内的 YouTube 视频链接"
+          />
+          <button class="primary-button" type="submit">导入</button>
+        </form>
+      </header>
+
+      <section class="global-panel" id="globalPanel" hidden>
+        <div class="global-view" id="historyView" aria-label="历史视频">
+          <div class="global-panel-head">
+            <div>
+              <h2>历史视频</h2>
+              <p>回到之前导入过的视频继续学习</p>
+            </div>
+            <button class="back-home-button" type="button" id="closeGlobalPanel">返回主页</button>
+          </div>
+
+          <div class="history-list" id="historyList"></div>
+        </div>
+
+        <div class="global-view" id="libraryView" aria-label="表达库">
+          <div class="global-panel-head">
+            <div>
+              <h2>表达库</h2>
+              <p id="cardCount">已保存 3 条</p>
+            </div>
+            <button class="back-home-button" type="button" id="closeLibraryPanel">返回主页</button>
+          </div>
+          <div class="card-list" id="cardList"></div>
+        </div>
+      </section>
+
+      <main class="learning-stage">
+        <section class="watch-column" aria-label="视频学习控制">
+          <section class="video-card" aria-label="视频播放器">
+            <div class="video-thumbnail">
+              <div class="video-grain" aria-hidden="true"></div>
+              <div class="video-title">
+                <span class="channel-avatar" aria-hidden="true"></span>
+                <div>
+                  <h2 id="videoTitle">How to Think in English</h2>
+                  <p id="videoChannel">English Learning Podcast</p>
+                </div>
+              </div>
+              <button class="youtube-play" type="button" id="playButton" aria-label="播放或暂停">
+                <span id="playIcon">▶</span>
+              </button>
+              <div class="youtube-link">
+                <span>前往平台观看：</span>
+                <strong>YouTube</strong>
+              </div>
+              <div class="video-badges" aria-hidden="true">
+                <span>4K</span>
+                <span id="videoDuration">18:42</span>
+              </div>
+              <div class="current-caption" id="currentCaption">
+                The real shift happens when you stop translating every sentence in your head.
+              </div>
+              <div class="playback-bar" aria-label="播放进度">
+                <span id="playbackProgress"></span>
+              </div>
+              <div class="playback-time" id="playbackTime">00:18 / 01:12</div>
+            </div>
+          </section>
+
+          <section class="drill-panel" aria-label="视频学习控制">
+            <div class="transport-row" aria-label="播放控制">
+              <button class="transport-button" type="button" id="prevLine" aria-label="上一句">‹</button>
+              <button class="transport-button main" type="button" id="playButtonSmall" aria-label="播放或暂停">▶</button>
+              <button class="transport-button" type="button" id="nextLine" aria-label="下一句">›</button>
+            </div>
+
+            <div class="speed-control">
+              <div class="speed-heading">
+                <span>播放速度</span>
+                <output id="speedLabel">1x</output>
+              </div>
+              <input id="speedRange" type="range" min="0.5" max="2" step="0.25" value="1" />
+              <div class="speed-ticks" aria-hidden="true">
+                <span>0.5x</span>
+                <span>0.75x</span>
+                <span>1x</span>
+                <span>1.25x</span>
+                <span>1.5x</span>
+                <span>2x</span>
+              </div>
+            </div>
+
+            <div class="quick-options">
+              <p id="statusText">已生成双语字幕，可以开始学习。</p>
+              <label class="toggle-control">
+                <input type="checkbox" id="hideCaptionToggle" />
+                <span>隐藏画面字幕</span>
+              </label>
+            </div>
+          </section>
+        </section>
+
+        <aside class="right-console" aria-label="字幕和 AI 教练">
+          <div class="console-tabs" role="tablist" aria-label="右侧面板">
+            <button class="console-tab is-active" type="button" data-panel="subtitles">
+              <span aria-hidden="true">□</span>
+              字幕
+            </button>
+            <button class="console-tab" type="button" data-panel="coach">
+              <span aria-hidden="true">○</span>
+              AI 教练
+            </button>
+          </div>
+
+          <section class="console-panel is-active" id="subtitlesPanel" aria-label="字幕列表">
+            <div class="subtitle-head">
+              <span>字幕</span>
+              <div class="subtitle-toolbar" aria-label="字幕显示设置">
+                <button class="chip" type="button" data-caption="en">EN</button>
+                <button class="chip" type="button" data-caption="zh">中文</button>
+                <button class="chip is-active" type="button" data-caption="both">双语</button>
+                <button class="chip" type="button" data-caption="none">隐藏</button>
+              </div>
+            </div>
+            <div class="subtitle-list" id="subtitleList" aria-label="字幕列表"></div>
+            <div class="selection-popover" id="selectionPopover" hidden>
+              <div class="selection-actions">
+                <button class="selection-action" type="button" id="selectionTranslateButton">翻译</button>
+                <button class="selection-action primary" type="button" id="selectionSaveButton">
+                  加入表达库
+                </button>
+              </div>
+              <div class="selection-result" id="selectionResult" hidden></div>
+            </div>
+          </section>
+
+          <section class="console-panel" id="coachPanel" aria-label="AI 口语讨论">
+            <div class="coach-prompt">
+              <div class="coach-prompt-copy">
+                <h2>开始和 AI 讨论这个视频</h2>
+                <p>你可以概述视频主要内容，说说你学到了什么，AI 会围绕你的回答继续和你交流。</p>
+              </div>
+            </div>
+
+            <div class="chat-log" id="chatLog" aria-live="polite">
+              <div class="message ai">
+                <span>AI</span>
+                <p>你可以先用英文或中文说说：这个视频主要讲了什么？你从里面学到了什么？</p>
+              </div>
+            </div>
+
+            <form class="chat-composer" id="chatForm">
+              <button class="voice-button" type="button" id="voiceButton" aria-label="语音输入">
+                <span class="voice-dot" aria-hidden="true"></span>
+              </button>
+              <input
+                id="chatText"
+                type="text"
+                value="I learned that thinking in English starts with meaningful input."
+                aria-label="输入你想和 AI 讨论的内容"
+              />
+              <button class="send-button" type="submit">发送</button>
+            </form>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div class="save-toast" id="saveToast" role="status" aria-live="polite" hidden>
+      <span class="save-toast-icon" aria-hidden="true">✓</span>
+      <span id="saveToastText">已加入表达库</span>
+    </div>
+
+    <script>
+      document.write(
+        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=no-line-plus-1"><\/script>`,
+      );
+    </script>
+  </body>
+</html>

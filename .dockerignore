@@ -1,0 +1,15 @@
+.git
+.codex
+.agents
+.venv
+__pycache__
+*.pyc
+*.pyo
+.DS_Store
+.env
+*.sqlite3
+apple_agent_history.json
+output
+tmp
+fastapi-visual-demo
+hello_app
