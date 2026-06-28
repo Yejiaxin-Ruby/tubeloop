@@ -1,4 +1,4 @@
-# YouTube English Learning MVP
+# Tubeloop
 
 一个用于 YouTube 英语学习的 MVP：导入视频链接，使用 mock 字幕完成精听/泛听、AI 讨论、选中字幕翻译和表达库保存。
 
@@ -28,8 +28,8 @@ http://127.0.0.1:8000
 ## Docker 运行
 
 ```bash
-docker build -t youtube-english-mvp .
-docker run -p 8000:8000 -e PORT=8000 youtube-english-mvp
+docker build -t tubeloop .
+docker run -p 8000:8000 -e PORT=8000 tubeloop
 ```
 
 ## 部署到 AI Builder
@@ -39,7 +39,7 @@ docker run -p 8000:8000 -e PORT=8000 youtube-english-mvp
 需要提供：
 
 - GitHub public repo URL
-- service name，例如 `youtube-english-mvp`
+- service name，例如 `tubeloop`
 - branch，例如 `main`
 
 平台会自动注入：

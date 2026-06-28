@@ -28,7 +28,7 @@ AI_BUILDER_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
 
 load_dotenv(ROOT_DIR / ".env")
 
-app = FastAPI(title="YouTube English Learning MVP")
+app = FastAPI(title="Tubeloop")
 
 app.add_middleware(
     CORSMiddleware,
