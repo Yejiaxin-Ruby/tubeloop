@@ -10,3 +10,5 @@ apple_agent_history.json
 output/
 tmp/
 hello_app/.env
+deployment-response.json
+deployment-status.json
