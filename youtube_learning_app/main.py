@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import html
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from dotenv import load_dotenv
@@ -25,6 +28,7 @@ MOCK_URL = "https://www.youtube.com/watch?v=mock-english-thinking"
 AI_BUILDER_BASE_URL = "https://space.ai-builders.com/backend/v1"
 AI_BUILDER_CHAT_MODEL = "gpt-5"
 AI_BUILDER_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
+MAX_VIDEO_SECONDS = 60 * 60
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -65,6 +69,24 @@ class TranslationRequest(BaseModel):
 class ExpressionExplainRequest(BaseModel):
     expression_text: str = Field(..., min_length=1)
     context: str = ""
+
+
+class ImportedSubtitle(BaseModel):
+    start_seconds: float
+    end_seconds: float
+    en: str
+    zh: str = ""
+
+
+class ImportedVideo(BaseModel):
+    youtube_url: str
+    youtube_video_id: str
+    title: str
+    channel: str
+    duration: str
+    thumbnail_url: str = ""
+    summary: str = ""
+    subtitles: list[ImportedSubtitle]
 
 
 MOCK_VIDEO: dict[str, Any] = {
@@ -214,6 +236,357 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if start >= 0 and end >= start:
         cleaned = cleaned[start : end + 1]
     return json.loads(cleaned)
+
+
+def parse_json_array(text: str) -> list[Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        cleaned = cleaned.removeprefix("json").strip()
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start >= 0 and end >= start:
+        cleaned = cleaned[start : end + 1]
+    data = json.loads(cleaned)
+    if not isinstance(data, list):
+        raise ValueError("Expected JSON array")
+    return data
+
+
+def extract_youtube_video_id(url: str) -> str | None:
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower().removeprefix("www.")
+    if host == "youtu.be":
+        video_id = parsed.path.strip("/").split("/")[0]
+        return video_id or None
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        if parsed.path == "/watch":
+            return parse_qs(parsed.query).get("v", [None])[0]
+        match = re.match(r"^/(embed|shorts|live)/([^/?#]+)", parsed.path)
+        if match:
+            return match.group(2)
+    return None
+
+
+def normalized_youtube_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def format_seconds(total_seconds: float) -> str:
+    total = max(0, int(total_seconds))
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    seconds = total % 60
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def clean_caption_text(text: str) -> str:
+    text = html.unescape(text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def parse_vtt_timestamp(value: str) -> float:
+    parts = value.strip().replace(",", ".").split(":")
+    try:
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        if len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+    except ValueError:
+        return 0.0
+    return 0.0
+
+
+def parse_json3_captions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    captions: list[dict[str, Any]] = []
+    for event in payload.get("events", []):
+        segs = event.get("segs") or []
+        text = clean_caption_text("".join(str(seg.get("utf8", "")) for seg in segs))
+        if not text:
+            continue
+        start = float(event.get("tStartMs") or 0) / 1000
+        duration = float(event.get("dDurationMs") or 0) / 1000
+        end = start + max(duration, 1.0)
+        captions.append({"start_seconds": start, "end_seconds": end, "text": text})
+    return captions
+
+
+def parse_vtt_captions(text: str) -> list[dict[str, Any]]:
+    captions: list[dict[str, Any]] = []
+    pending_time: tuple[float, float] | None = None
+    pending_text: list[str] = []
+
+    def flush() -> None:
+        nonlocal pending_time, pending_text
+        if pending_time and pending_text:
+            caption_text = clean_caption_text(" ".join(pending_text))
+            if caption_text:
+                captions.append(
+                    {
+                        "start_seconds": pending_time[0],
+                        "end_seconds": pending_time[1],
+                        "text": caption_text,
+                    },
+                )
+        pending_time = None
+        pending_text = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            flush()
+            continue
+        if line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
+            continue
+        if "-->" in line:
+            flush()
+            left, right = line.split("-->", 1)
+            pending_time = (
+                parse_vtt_timestamp(left),
+                parse_vtt_timestamp(right.split()[0]),
+            )
+            continue
+        if pending_time and not line.isdigit():
+            pending_text.append(line)
+    flush()
+    return captions
+
+
+def choose_caption_track(
+    tracks: dict[str, list[dict[str, Any]]],
+    preferred_prefixes: tuple[str, ...],
+) -> list[dict[str, Any]] | None:
+    if not tracks:
+        return None
+    candidates: list[tuple[int, str, list[dict[str, Any]]]] = []
+    for language, entries in tracks.items():
+        normalized = language.lower()
+        for rank, prefix in enumerate(preferred_prefixes):
+            if normalized == prefix or normalized.startswith(f"{prefix}-"):
+                candidates.append((rank, language, entries))
+                break
+    if not candidates:
+        return None
+    _, _, entries = sorted(candidates, key=lambda item: item[0])[0]
+    return sorted(
+        entries,
+        key=lambda entry: 0
+        if entry.get("ext") == "json3"
+        else 1
+        if entry.get("ext") in {"vtt", "srv3", "srv2"}
+        else 2,
+    )
+
+
+def fetch_caption_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    last_error: Exception | None = None
+    with httpx.Client(timeout=45, follow_redirects=True) as client:
+        for entry in entries:
+            caption_url = entry.get("url")
+            if not caption_url:
+                continue
+            try:
+                response = client.get(caption_url)
+                response.raise_for_status()
+                ext = entry.get("ext")
+                content_type = response.headers.get("content-type", "")
+                if ext == "json3" or "json" in content_type:
+                    return parse_json3_captions(response.json())
+                return parse_vtt_captions(response.text)
+            except Exception as error:
+                last_error = error
+    if last_error:
+        raise last_error
+    return []
+
+
+def match_translation_line(
+    line: dict[str, Any],
+    translated_lines: list[dict[str, Any]],
+) -> str:
+    best_text = ""
+    best_score = -9999.0
+    start = float(line["start_seconds"])
+    end = float(line["end_seconds"])
+    for translated in translated_lines:
+        other_start = float(translated["start_seconds"])
+        other_end = float(translated["end_seconds"])
+        overlap = max(0.0, min(end, other_end) - max(start, other_start))
+        distance = abs(start - other_start)
+        score = overlap * 10 - distance
+        if score > best_score:
+            best_score = score
+            best_text = str(translated["text"])
+    return best_text if best_score > -6 else ""
+
+
+def transcript_snippet_value(snippet: Any, key: str, default: Any = None) -> Any:
+    if isinstance(snippet, dict):
+        return snippet.get(key, default)
+    return getattr(snippet, key, default)
+
+
+def transcript_to_caption_lines(fetched: Any) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
+    for snippet in fetched:
+        text = clean_caption_text(str(transcript_snippet_value(snippet, "text", "")))
+        if not text:
+            continue
+        start = float(transcript_snippet_value(snippet, "start", 0) or 0)
+        duration = float(transcript_snippet_value(snippet, "duration", 0) or 0)
+        lines.append(
+            {
+                "start_seconds": start,
+                "end_seconds": start + max(duration, 0.5),
+                "text": text,
+            },
+        )
+    return lines
+
+
+def fetch_transcript_caption_lines(
+    video_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    api = YouTubeTranscriptApi()
+    transcript_list = api.list(video_id)
+    english_transcript = transcript_list.find_transcript(["en"])
+    english_lines = transcript_to_caption_lines(english_transcript.fetch())
+
+    chinese_lines: list[dict[str, Any]] = []
+    try:
+        chinese_transcript = transcript_list.find_transcript(["zh-CN", "zh-Hans", "zh"])
+        chinese_lines = transcript_to_caption_lines(chinese_transcript.fetch())
+    except Exception:
+        if english_transcript.is_translatable:
+            try:
+                translated = english_transcript.translate("zh-Hans")
+                chinese_lines = transcript_to_caption_lines(translated.fetch())
+            except Exception as error:
+                print(f"[transcript translation fallback] {type(error).__name__}: {error}", flush=True)
+    return english_lines, chinese_lines
+
+
+def translate_caption_lines(lines: list[dict[str, Any]]) -> list[str]:
+    translations: list[str] = []
+    if not lines:
+        return translations
+    chunk_size = 35
+    for chunk_start in range(0, len(lines), chunk_size):
+        chunk = lines[chunk_start : chunk_start + chunk_size]
+        numbered = "\n".join(
+            f"{index + 1}. {line['text']}"
+            for index, line in enumerate(chunk)
+        )
+        try:
+            raw = call_builder_chat(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Translate English subtitle lines into concise, natural Simplified Chinese. "
+                            "Return strict JSON array only. The array length must match the input line count."
+                        ),
+                    },
+                    {"role": "user", "content": numbered},
+                ],
+                max_tokens=2400,
+            )
+            parsed = [str(item).strip() for item in parse_json_array(raw)]
+            if len(parsed) != len(chunk):
+                raise ValueError("Translation count mismatch")
+            translations.extend(parsed)
+        except Exception as error:
+            print(f"[subtitle translation fallback] {type(error).__name__}: {error}", flush=True)
+            translations.extend([""] * len(chunk))
+    return translations
+
+
+def fetch_youtube_video(url: str) -> ImportedVideo:
+    video_id = extract_youtube_video_id(url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="请粘贴有效的 YouTube 视频链接")
+
+    try:
+        from yt_dlp import YoutubeDL
+    except ImportError as error:
+        raise HTTPException(status_code=500, detail="YouTube 解析依赖未安装") from error
+
+    ydl_options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "extract_flat": False,
+        "cachedir": False,
+    }
+    try:
+        with YoutubeDL(ydl_options) as ydl:
+            info = ydl.extract_info(normalized_youtube_url(video_id), download=False)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"YouTube 视频解析失败：{error}") from error
+
+    duration_seconds = int(info.get("duration") or 0)
+    if duration_seconds and duration_seconds > MAX_VIDEO_SECONDS:
+        raise HTTPException(status_code=400, detail="MVP 版本目前只支持 1 小时以内的视频")
+
+    try:
+        english_lines, chinese_lines = fetch_transcript_caption_lines(video_id)
+    except Exception as error:
+        print(f"[transcript fallback] {type(error).__name__}: {error}", flush=True)
+        subtitle_tracks = info.get("subtitles") or {}
+        automatic_tracks = info.get("automatic_captions") or {}
+        english_track = choose_caption_track(subtitle_tracks, ("en",)) or choose_caption_track(
+            automatic_tracks,
+            ("en",),
+        )
+        if not english_track:
+            raise HTTPException(status_code=400, detail="这个视频没有可读取的英文字幕，暂时无法导入") from error
+        try:
+            english_lines = fetch_caption_entries(english_track)
+        except Exception as caption_error:
+            raise HTTPException(status_code=502, detail=f"英文字幕读取失败：{caption_error}") from caption_error
+        chinese_lines = []
+
+    english_lines = [
+        line for line in english_lines
+        if line.get("text") and float(line.get("end_seconds", 0)) > float(line.get("start_seconds", 0))
+    ]
+    if not english_lines:
+        raise HTTPException(status_code=400, detail="英文字幕为空，暂时无法导入")
+
+    if chinese_lines:
+        translations = [match_translation_line(line, chinese_lines) for line in english_lines]
+    else:
+        translations = translate_caption_lines(english_lines)
+
+    subtitles = [
+        ImportedSubtitle(
+            start_seconds=float(line["start_seconds"]),
+            end_seconds=float(line["end_seconds"]),
+            en=str(line["text"]),
+            zh=translations[index] if index < len(translations) else "",
+        )
+        for index, line in enumerate(english_lines)
+    ]
+
+    summary = clean_caption_text(info.get("description") or "")[:700]
+    return ImportedVideo(
+        youtube_url=normalized_youtube_url(video_id),
+        youtube_video_id=video_id,
+        title=str(info.get("title") or "Untitled YouTube video"),
+        channel=str(info.get("channel") or info.get("uploader") or "YouTube"),
+        duration=format_seconds(duration_seconds) if duration_seconds else format_seconds(subtitles[-1].end_seconds),
+        thumbnail_url=str(info.get("thumbnail") or ""),
+        summary=summary or "Imported from YouTube captions.",
+        subtitles=subtitles,
+    )
 
 
 def mock_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> str:
@@ -385,8 +758,22 @@ def init_db() -> None:
             );
             """
         )
-        video_id = ensure_mock_video(db)
-        seed_cards(db, video_id)
+        ensure_column(db, "videos", "youtube_video_id", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(db, "videos", "thumbnail_url", "TEXT NOT NULL DEFAULT ''")
+
+
+def ensure_column(
+    db: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    columns = {
+        row["name"]
+        for row in db.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 
 
 def ensure_mock_video(db: sqlite3.Connection) -> int:
@@ -414,6 +801,85 @@ def ensure_mock_video(db: sqlite3.Connection) -> int:
     )
     video_id = int(cursor.lastrowid)
     insert_mock_subtitles(db, video_id)
+    return video_id
+
+
+def upsert_imported_video(db: sqlite3.Connection, imported: ImportedVideo) -> int:
+    existing = db.execute(
+        """
+        SELECT id FROM videos
+        WHERE youtube_video_id = ? OR youtube_url = ?
+        """,
+        (imported.youtube_video_id, imported.youtube_url),
+    ).fetchone()
+
+    if existing:
+        video_id = int(existing["id"])
+        db.execute(
+            """
+            UPDATE videos
+            SET youtube_url = ?,
+                youtube_video_id = ?,
+                title = ?,
+                channel = ?,
+                duration = ?,
+                thumbnail_url = ?,
+                summary = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                imported.youtube_url,
+                imported.youtube_video_id,
+                imported.title,
+                imported.channel,
+                imported.duration,
+                imported.thumbnail_url,
+                imported.summary,
+                video_id,
+            ),
+        )
+        db.execute("DELETE FROM subtitle_lines WHERE video_id = ?", (video_id,))
+    else:
+        cursor = db.execute(
+            """
+            INSERT INTO videos (
+              youtube_url, youtube_video_id, title, channel, duration, thumbnail_tone,
+              thumbnail_url, summary, last_position
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                imported.youtube_url,
+                imported.youtube_video_id,
+                imported.title,
+                imported.channel,
+                imported.duration,
+                "blue",
+                imported.thumbnail_url,
+                imported.summary,
+                "00:00",
+            ),
+        )
+        video_id = int(cursor.lastrowid)
+
+    for index, line in enumerate(imported.subtitles):
+        db.execute(
+            """
+            INSERT INTO subtitle_lines (
+              video_id, line_index, start_time, end_time, english_text, chinese_text
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                video_id,
+                index,
+                format_seconds(line.start_seconds),
+                format_seconds(line.end_seconds),
+                line.en,
+                line.zh,
+            ),
+        )
     return video_id
 
 
@@ -476,6 +942,8 @@ def video_payload(db: sqlite3.Connection, video_id: int) -> dict[str, Any]:
             "time": row["start_time"],
             "start_time": row["start_time"],
             "end_time": row["end_time"],
+            "start_seconds": parse_vtt_timestamp(row["start_time"]),
+            "end_seconds": parse_vtt_timestamp(row["end_time"]),
             "en": row["english_text"],
             "zh": row["chinese_text"],
         }
@@ -518,20 +986,22 @@ def health() -> dict[str, str]:
 
 @app.post("/api/videos/import")
 def import_video(request: ImportVideoRequest) -> dict[str, Any]:
-    # MVP behavior: any YouTube-looking URL maps to the mock learning material.
-    if "youtube.com" not in request.url and "youtu.be" not in request.url:
-        raise HTTPException(status_code=400, detail="Please use a YouTube URL for this MVP")
+    if request.url == MOCK_URL:
+        with connect() as db:
+            video_id = ensure_mock_video(db)
+            db.execute(
+                """
+                UPDATE videos
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (video_id,),
+            )
+            return video_payload(db, video_id)
 
+    imported = fetch_youtube_video(request.url)
     with connect() as db:
-        video_id = ensure_mock_video(db)
-        db.execute(
-            """
-            UPDATE videos
-            SET updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-            """,
-            (video_id,),
-        )
+        video_id = upsert_imported_video(db, imported)
         return video_payload(db, video_id)
 
 

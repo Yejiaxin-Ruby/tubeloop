@@ -1,11 +1,13 @@
 # Tubeloop
 
-一个用于 YouTube 英语学习的 MVP：导入视频链接，使用 mock 字幕完成精听/泛听、AI 讨论、选中字幕翻译和表达库保存。
+一个用于 YouTube 英语学习的 MVP：导入 YouTube 链接，读取真实字幕，完成精听/泛听、AI 讨论、选中字幕翻译和表达库保存。
 
 ## 功能
 
 - FastAPI 单服务部署，同时提供网页和 API
-- 字幕学习界面
+- 真实 YouTube 视频嵌入播放
+- 读取 YouTube 英文字幕，并尽量获取或生成中文字幕
+- 点击字幕跳转到对应播放时间
 - 选中字幕后翻译或加入表达库
 - AI 教练聊天
 - 语音转文字入口
@@ -58,4 +60,4 @@ AI_BUILDER_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
 
 ## 备注
 
-当前 MVP 的 YouTube 导入仍使用 mock 字幕数据。真实 YouTube 字幕抓取可以在下一阶段加入。
+当前 MVP 支持 1 小时以内、可读取英文字幕的 YouTube 视频。少数无字幕、字幕被关闭或被 YouTube 限制访问的视频会导入失败。

@@ -6,7 +6,7 @@
     <title>Tubeloop</title>
     <script>
       document.write(
-        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=no-line-plus-1" />`,
+        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=real-youtube-1" />`,
       );
     </script>
   </head>
@@ -31,7 +31,6 @@
           <input
             id="videoUrl"
             type="url"
-            value="https://www.youtube.com/watch?v=mock-english-thinking"
             placeholder="粘贴 1 小时以内的 YouTube 视频链接"
           />
           <button class="primary-button" type="submit">导入</button>
@@ -67,12 +66,13 @@
         <section class="watch-column" aria-label="视频学习控制">
           <section class="video-card" aria-label="视频播放器">
             <div class="video-thumbnail">
+              <div class="youtube-player" id="youtubePlayer" aria-label="YouTube 播放器"></div>
               <div class="video-grain" aria-hidden="true"></div>
               <div class="video-title">
                 <span class="channel-avatar" aria-hidden="true"></span>
                 <div>
-                  <h2 id="videoTitle">How to Think in English</h2>
-                  <p id="videoChannel">English Learning Podcast</p>
+                  <h2 id="videoTitle">粘贴 YouTube 链接开始</h2>
+                  <p id="videoChannel">支持 1 小时以内且带英文字幕的视频</p>
                 </div>
               </div>
               <button class="youtube-play" type="button" id="playButton" aria-label="播放或暂停">
@@ -84,15 +84,15 @@
               </div>
               <div class="video-badges" aria-hidden="true">
                 <span>4K</span>
-                <span id="videoDuration">18:42</span>
+                <span id="videoDuration">00:00</span>
               </div>
               <div class="current-caption" id="currentCaption">
-                The real shift happens when you stop translating every sentence in your head.
+                导入视频后，这里会显示当前句字幕。
               </div>
               <div class="playback-bar" aria-label="播放进度">
                 <span id="playbackProgress"></span>
               </div>
-              <div class="playback-time" id="playbackTime">00:18 / 01:12</div>
+              <div class="playback-time" id="playbackTime">00:00 / 00:00</div>
             </div>
           </section>
 
@@ -120,7 +120,7 @@
             </div>
 
             <div class="quick-options">
-              <p id="statusText">已生成双语字幕，可以开始学习。</p>
+              <p id="statusText">粘贴一个有英文字幕的 YouTube 链接开始学习。</p>
               <label class="toggle-control">
                 <input type="checkbox" id="hideCaptionToggle" />
                 <span>隐藏画面字幕</span>
@@ -202,7 +202,7 @@
 
     <script>
       document.write(
-        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=no-line-plus-1"><\/script>`,
+        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=real-youtube-1"><\/script>`,
       );
     </script>
   </body>
