@@ -530,7 +530,11 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
         with YoutubeDL(ydl_options) as ydl:
             info = ydl.extract_info(normalized_youtube_url(video_id), download=False)
     except Exception as error:
-        raise HTTPException(status_code=502, detail=f"YouTube 视频解析失败：{error}") from error
+        print(f"[youtube metadata failed] {type(error).__name__}: {error}", flush=True)
+        raise HTTPException(
+            status_code=502,
+            detail="暂时无法读取这个 YouTube 视频。请确认链接可公开访问，并稍后再试。",
+        ) from error
 
     duration_seconds = int(info.get("duration") or 0)
     if duration_seconds and duration_seconds > MAX_VIDEO_SECONDS:
@@ -547,11 +551,18 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
             ("en",),
         )
         if not english_track:
-            raise HTTPException(status_code=400, detail="这个视频没有可读取的英文字幕，暂时无法导入") from error
+            raise HTTPException(
+                status_code=400,
+                detail="这个视频没有可读取的英文字幕。请换一个开启英文字幕的视频。",
+            ) from error
         try:
             english_lines = fetch_caption_entries(english_track)
         except Exception as caption_error:
-            raise HTTPException(status_code=502, detail=f"英文字幕读取失败：{caption_error}") from caption_error
+            print(f"[english caption failed] {type(caption_error).__name__}: {caption_error}", flush=True)
+            raise HTTPException(
+                status_code=502,
+                detail="英文字幕读取失败。请换一个开启英文字幕的视频，或稍后再试。",
+            ) from caption_error
         chinese_lines = []
 
     english_lines = [
@@ -559,7 +570,7 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
         if line.get("text") and float(line.get("end_seconds", 0)) > float(line.get("start_seconds", 0))
     ]
     if not english_lines:
-        raise HTTPException(status_code=400, detail="英文字幕为空，暂时无法导入")
+        raise HTTPException(status_code=400, detail="英文字幕为空。请换一个字幕内容更完整的视频。")
 
     if chinese_lines:
         translations = [match_translation_line(line, chinese_lines) for line in english_lines]
@@ -608,7 +619,7 @@ def mock_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> str:
     )
 
 
-def subtitles_context(db: sqlite3.Connection, video_id: int) -> str:
+def subtitles_context(db: sqlite3.Connection, video_id: int, max_chars: int = 12000) -> str:
     rows = db.execute(
         """
         SELECT start_time, english_text, chinese_text
@@ -618,10 +629,26 @@ def subtitles_context(db: sqlite3.Connection, video_id: int) -> str:
         """,
         (video_id,),
     ).fetchall()
-    return "\n".join(
+    lines = [
         f"{row['start_time']} EN: {row['english_text']}\nZH: {row['chinese_text']}"
         for row in rows
-    )
+    ]
+    context = "\n".join(lines)
+    if len(context) <= max_chars:
+        return context
+
+    head_count = min(80, max(20, len(lines) // 4))
+    tail_count = min(40, max(12, len(lines) // 8))
+    middle_count = min(40, max(12, len(lines) // 8))
+    middle_start = max(head_count, len(lines) // 2 - middle_count // 2)
+    sampled = [
+        *lines[:head_count],
+        "[... middle of transcript omitted for length ...]",
+        *lines[middle_start : middle_start + middle_count],
+        "[... later transcript omitted for length ...]",
+        *lines[-tail_count:],
+    ]
+    return "\n".join(sampled)[:max_chars]
 
 
 def build_ai_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> str:

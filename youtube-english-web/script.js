@@ -34,6 +34,7 @@ const speedRange = document.querySelector("#speedRange");
 const speedLabel = document.querySelector("#speedLabel");
 const globalPanel = document.querySelector("#globalPanel");
 const videoUrlInput = document.querySelector("#videoUrl");
+const demoVideoButton = document.querySelector("#demoVideoButton");
 let isListening = false;
 let mediaRecorder = null;
 let audioChunks = [];
@@ -49,6 +50,7 @@ let youtubePlayer = null;
 let youtubePlayerReady = false;
 let youtubeApiPromise = null;
 let currentYoutubeVideoId = "";
+const demoYoutubeUrl = "https://www.youtube.com/watch?v=arj7oStGLkU";
 
 const fileModeVideo = {
   id: 1,
@@ -691,6 +693,7 @@ async function loadInitialData() {
   }
 
   const config = await apiFetch("/config");
+  videoUrlInput.value = "";
   statusText.textContent = config.builder_enabled
     ? "已连接 builder API。粘贴一个有英文字幕的 YouTube 链接开始。"
     : "当前使用 mock fallback：未检测到 builder token。";
@@ -711,6 +714,12 @@ document.querySelector("#importForm").addEventListener("submit", async (event) =
   } catch (error) {
     statusText.textContent = error.message;
   }
+});
+
+demoVideoButton.addEventListener("click", () => {
+  videoUrlInput.value = demoYoutubeUrl;
+  statusText.textContent = "已填入示例视频，点击导入即可开始体验。";
+  videoUrlInput.focus();
 });
 
 document.querySelectorAll(".chip").forEach((button) => {

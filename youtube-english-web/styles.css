@@ -180,7 +180,7 @@ button {
 
 .import-bar {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 10px;
   align-items: center;
 }
@@ -201,7 +201,8 @@ button {
 }
 
 .primary-button,
-.outline-button {
+.outline-button,
+.secondary-button {
   min-height: 42px;
   border-radius: 8px;
   font-weight: 800;
@@ -212,6 +213,13 @@ button {
   border: 0;
   color: #111;
   background: var(--white);
+}
+
+.secondary-button {
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  color: var(--text-soft);
+  background: #101010;
 }
 
 .global-panel {
