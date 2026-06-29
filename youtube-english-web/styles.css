@@ -901,7 +901,7 @@ button {
 
 #subtitlesPanel {
   position: relative;
-  grid-template-rows: 80px minmax(0, 1fr);
+  grid-template-rows: 80px auto minmax(0, 1fr);
 }
 
 .subtitle-head {
@@ -920,6 +920,32 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.translation-status {
+  margin: 12px 26px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-soft);
+  background: #121212;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.translation-status[data-state="running"],
+.translation-status[data-state="pending"] {
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--text);
+}
+
+.translation-status[data-state="failed"] {
+  border-color: rgba(255, 75, 75, 0.38);
+  color: #ffb8b8;
+}
+
+.translation-status[hidden] {
+  display: none;
 }
 
 .chip {

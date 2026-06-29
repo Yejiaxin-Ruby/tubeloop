@@ -1,6 +1,8 @@
 let subtitles = [];
 let cards = [];
 let currentVideoId = null;
+let currentTranslationStatus = "idle";
+let currentTranslationError = "";
 let activeIndex = 0;
 let captionMode = "both";
 let isPlaying = false;
@@ -16,6 +18,7 @@ const saveToastIcon = document.querySelector(".save-toast-icon");
 const saveToastText = document.querySelector("#saveToastText");
 const currentCaption = document.querySelector("#currentCaption");
 const statusText = document.querySelector("#statusText");
+const translationStatus = document.querySelector("#translationStatus");
 const cardList = document.querySelector("#cardList");
 const cardCount = document.querySelector("#cardCount");
 const chatLog = document.querySelector("#chatLog");
@@ -47,6 +50,7 @@ let lastSelectionPoint = null;
 let selectionChangeTimer = null;
 let saveToastTimer = null;
 let saveToastHideTimer = null;
+let translationPollTimer = null;
 let youtubePlayer = null;
 let youtubePlayerReady = false;
 let youtubeApiPromise = null;
@@ -140,6 +144,10 @@ function visibleText(line) {
   return line.en;
 }
 
+function hasChineseSubtitles() {
+  return subtitles.some((line) => String(line.zh || "").trim());
+}
+
 function getLineStartSeconds(line) {
   return Number(line?.start_seconds ?? timeToSeconds(line?.start_time || line?.time || ""));
 }
@@ -193,6 +201,15 @@ function renderSubtitles() {
     return;
   }
 
+  if (captionMode === "zh" && !hasChineseSubtitles()) {
+    const pending = document.createElement("article");
+    pending.className = "subtitle-line is-active subtitle-hidden-state";
+    pending.innerHTML = `<div class="subtitle-text"><p class="zh-text">中文字幕正在生成，英文字幕可以先使用。</p></div>`;
+    subtitleList.append(pending);
+    updateCaption();
+    return;
+  }
+
   subtitles.forEach((line, index) => {
     const row = document.createElement("article");
     row.className = `subtitle-line${index === activeIndex ? " is-active" : ""}`;
@@ -212,7 +229,7 @@ function renderSubtitles() {
       textWrap.append(en);
     }
 
-    if (captionMode === "both" || captionMode === "zh") {
+    if ((captionMode === "both" || captionMode === "zh") && line.zh) {
       const zh = document.createElement("p");
       zh.className = "zh-text";
       zh.textContent = line.zh;
@@ -321,6 +338,105 @@ function hideSaveToast() {
   saveToastHideTimer = window.setTimeout(() => {
     saveToast.hidden = true;
   }, 180);
+}
+
+function stopTranslationPolling() {
+  if (translationPollTimer) {
+    window.clearInterval(translationPollTimer);
+    translationPollTimer = null;
+  }
+}
+
+function updateTranslationStatus(video = {}) {
+  currentTranslationStatus = video.chinese_translation_status || currentTranslationStatus || "idle";
+  currentTranslationError = video.chinese_translation_error || "";
+  if (!translationStatus) return;
+
+  const total = Number(video.chinese_translation_total || subtitles.length || 0);
+  const translated = Number(video.chinese_translation_count || subtitles.filter((line) => line.zh).length);
+  const hasChinese = translated > 0 || hasChineseSubtitles();
+
+  if (!currentVideoId || !total || (hasChinese && currentTranslationStatus === "complete")) {
+    translationStatus.hidden = true;
+    translationStatus.textContent = "";
+    translationStatus.dataset.state = "";
+    return;
+  }
+
+  if (currentTranslationStatus === "pending" || currentTranslationStatus === "running") {
+    translationStatus.hidden = false;
+    translationStatus.dataset.state = currentTranslationStatus;
+    translationStatus.textContent = `正在生成中文字幕，英文字幕和视频可以先使用。已完成 ${translated}/${total} 条。`;
+    return;
+  }
+
+  if (currentTranslationStatus === "partial") {
+    translationStatus.hidden = false;
+    translationStatus.dataset.state = "partial";
+    translationStatus.textContent = `已生成部分中文字幕：${translated}/${total} 条。`;
+    return;
+  }
+
+  if (currentTranslationStatus === "failed") {
+    translationStatus.hidden = false;
+    translationStatus.dataset.state = "failed";
+    translationStatus.textContent = currentTranslationError || "中文字幕生成失败，请稍后重新导入或重试。";
+    return;
+  }
+
+  if (!hasChinese) {
+    translationStatus.hidden = false;
+    translationStatus.dataset.state = "pending";
+    translationStatus.textContent = "这个视频暂无中文字幕，正在尝试生成。";
+    return;
+  }
+
+  translationStatus.hidden = true;
+  translationStatus.textContent = "";
+  translationStatus.dataset.state = "";
+}
+
+async function refreshTranslationStatus() {
+  if (!currentVideoId) return;
+  try {
+    const result = await apiFetch(`/videos/${currentVideoId}/translation-status`);
+    currentTranslationStatus = result.status || "idle";
+    currentTranslationError = result.error || "";
+    updateTranslationStatus({
+      chinese_translation_status: currentTranslationStatus,
+      chinese_translation_error: currentTranslationError,
+      chinese_translation_total: result.total,
+      chinese_translation_count: result.translated,
+    });
+
+    if (currentTranslationStatus === "complete" || currentTranslationStatus === "partial") {
+      const loaded = await apiFetch(`/videos/${currentVideoId}`);
+      subtitles = loaded.subtitles || subtitles;
+      currentTranslationStatus = loaded.chinese_translation_status || currentTranslationStatus;
+      currentTranslationError = loaded.chinese_translation_error || "";
+      renderSubtitles();
+      updateTranslationStatus(loaded);
+      stopTranslationPolling();
+      showSaveToast(
+        currentTranslationStatus === "complete" ? "中文字幕已生成" : "部分中文字幕已生成",
+        { variant: "success" },
+      );
+    } else if (currentTranslationStatus === "failed") {
+      stopTranslationPolling();
+    }
+  } catch (error) {
+    console.warn(error.message);
+  }
+}
+
+function startTranslationPolling(video = {}) {
+  stopTranslationPolling();
+  updateTranslationStatus(video);
+  if (!currentVideoId) return;
+  const status = video.chinese_translation_status || currentTranslationStatus;
+  if (status !== "pending" && status !== "running") return;
+  translationPollTimer = window.setInterval(refreshTranslationStatus, 4000);
+  window.setTimeout(refreshTranslationStatus, 1200);
 }
 
 async function saveSelectedExpression() {
@@ -715,6 +831,8 @@ async function setupYoutubePlayer(video) {
 function setCurrentVideo(video) {
   currentVideoId = video.id;
   subtitles = video.subtitles || [];
+  currentTranslationStatus = video.chinese_translation_status || "idle";
+  currentTranslationError = video.chinese_translation_error || "";
   activeIndex = 0;
   setPlayState(false);
   videoTitle.textContent = video.title;
@@ -724,6 +842,7 @@ function setCurrentVideo(video) {
   chatLog.replaceChildren();
   appendMessage("ai", "你可以先概述视频主要内容，说说你学到了什么，AI 会围绕你的回答继续和你交流。");
   renderSubtitles();
+  startTranslationPolling(video);
   setupYoutubePlayer(video);
 }
 
@@ -771,6 +890,7 @@ async function loadInitialData() {
   if (location.protocol === "file:") {
     currentVideoId = null;
     subtitles = [];
+    stopTranslationPolling();
     activeIndex = 0;
     videoTitle.textContent = "请打开线上版 Tubeloop";
     videoChannel.textContent = publicAppUrl;
@@ -780,6 +900,7 @@ async function loadInitialData() {
     renderCards();
     renderHistory([]);
     renderSubtitles();
+    updateTranslationStatus();
     statusText.textContent = "当前打开的是静态文件。请使用线上地址：https://tubeloop.ai-builders.space/";
     return;
   }
@@ -809,7 +930,13 @@ document.querySelector("#importForm").addEventListener("submit", async (event) =
     });
     setCurrentVideo(video);
     await Promise.all([loadCards(), loadHistory()]);
-    showSaveToast("载入成功", { variant: "success" });
+    const translationStatusValue = video.chinese_translation_status || "";
+    showSaveToast(
+      translationStatusValue === "pending" || translationStatusValue === "running"
+        ? "载入成功，正在生成中文字幕"
+        : "载入成功",
+      { variant: "success" },
+    );
   } catch (error) {
     statusText.textContent = error.message;
     showSaveToast("载入失败", { variant: "error" });

@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -474,38 +474,160 @@ def fetch_transcript_caption_lines(
 
 
 def translate_caption_lines(lines: list[dict[str, Any]]) -> list[str]:
-    translations: list[str] = []
     if not lines:
-        return translations
-    chunk_size = 35
+        return []
+    chunk_size = 2
+    translations: list[str] = []
     for chunk_start in range(0, len(lines), chunk_size):
         chunk = lines[chunk_start : chunk_start + chunk_size]
-        numbered = "\n".join(
-            f"{index + 1}. {line['text']}"
-            for index, line in enumerate(chunk)
-        )
-        try:
-            raw = call_builder_chat(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Translate English subtitle lines into concise, natural Simplified Chinese. "
-                            "Return strict JSON array only. The array length must match the input line count."
-                        ),
-                    },
-                    {"role": "user", "content": numbered},
-                ],
-                max_tokens=2400,
-            )
-            parsed = [str(item).strip() for item in parse_json_array(raw)]
-            if len(parsed) != len(chunk):
-                raise ValueError("Translation count mismatch")
-            translations.extend(parsed)
-        except Exception as error:
-            print(f"[subtitle translation fallback] {type(error).__name__}: {error}", flush=True)
-            translations.extend([""] * len(chunk))
+        translations.extend(translate_caption_chunk(chunk))
     return translations
+
+
+def translate_caption_chunk(lines: list[dict[str, Any]]) -> list[str]:
+    if not lines:
+        return []
+    if len(lines) == 1:
+        try:
+            return [
+                call_builder_chat(
+                    [
+                        {
+                            "role": "system",
+                            "content": "Translate this English subtitle into concise natural Simplified Chinese. Return only the translation.",
+                        },
+                        {"role": "user", "content": str(lines[0]["text"])},
+                    ],
+                    max_tokens=220,
+                ).strip(),
+            ]
+        except Exception as error:
+            print(f"[single subtitle translation failed] {type(error).__name__}: {error}", flush=True)
+            return [""]
+
+    numbered = "\n".join(
+        f"{index + 1}. {line['text']}"
+        for index, line in enumerate(lines)
+    )
+    try:
+        raw = call_builder_chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate English subtitle lines into concise, natural Simplified Chinese. "
+                        "Return a strict JSON array only. Keep the same order and same item count."
+                    ),
+                },
+                {"role": "user", "content": numbered},
+            ],
+            max_tokens=max(700, len(lines) * 120),
+        )
+        parsed = [str(item).strip() for item in parse_json_array(raw)]
+        if len(parsed) != len(lines):
+            raise ValueError("Translation count mismatch")
+        return parsed
+    except Exception as error:
+        print(f"[subtitle translation split retry] {type(error).__name__}: {error}", flush=True)
+        midpoint = len(lines) // 2
+        return translate_caption_chunk(lines[:midpoint]) + translate_caption_chunk(lines[midpoint:])
+
+
+def subtitle_translation_counts(db: sqlite3.Connection, video_id: int) -> dict[str, int]:
+    row = db.execute(
+        """
+        SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN TRIM(chinese_text) != '' THEN 1 ELSE 0 END) AS translated
+        FROM subtitle_lines
+        WHERE video_id = ?
+        """,
+        (video_id,),
+    ).fetchone()
+    return {
+        "total": int(row["total"] or 0),
+        "translated": int(row["translated"] or 0),
+    }
+
+
+def update_chinese_translation_status(
+    db: sqlite3.Connection,
+    video_id: int,
+    status: str,
+    error: str = "",
+) -> None:
+    db.execute(
+        """
+        UPDATE videos
+        SET chinese_translation_status = ?,
+            chinese_translation_error = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (status, error, video_id),
+    )
+
+
+def generate_chinese_subtitles_task(video_id: int) -> None:
+    with connect() as db:
+        rows = [
+            row_to_dict(row)
+            for row in db.execute(
+                """
+                SELECT id, english_text
+                FROM subtitle_lines
+                WHERE video_id = ? AND TRIM(chinese_text) = ''
+                ORDER BY line_index
+                """,
+                (video_id,),
+            ).fetchall()
+        ]
+        if not rows:
+            update_chinese_translation_status(db, video_id, "complete")
+            return
+        update_chinese_translation_status(db, video_id, "running")
+
+    updated_count = 0
+    chunk_size = 2
+    for chunk_start in range(0, len(rows), chunk_size):
+        chunk = rows[chunk_start : chunk_start + chunk_size]
+        translations = translate_caption_chunk(
+            [{"text": row["english_text"]} for row in chunk],
+        )
+        with connect() as db:
+            for row, translation in zip(chunk, translations):
+                cleaned = str(translation or "").strip()
+                if not cleaned:
+                    continue
+                updated_count += 1
+                db.execute(
+                    """
+                    UPDATE subtitle_lines
+                    SET chinese_text = ?
+                    WHERE id = ?
+                    """,
+                    (cleaned, row["id"]),
+                )
+            update_chinese_translation_status(db, video_id, "running")
+
+    with connect() as db:
+        counts = subtitle_translation_counts(db, video_id)
+        if counts["total"] and counts["translated"] >= counts["total"]:
+            update_chinese_translation_status(db, video_id, "complete")
+        elif updated_count:
+            update_chinese_translation_status(
+                db,
+                video_id,
+                "partial",
+                "部分中文字幕生成失败，可稍后重新生成。",
+            )
+        else:
+            update_chinese_translation_status(
+                db,
+                video_id,
+                "failed",
+                "中文字幕生成失败，请稍后重试。",
+            )
 
 
 def fetch_youtube_video(url: str) -> ImportedVideo:
@@ -789,6 +911,18 @@ def init_db() -> None:
         )
         ensure_column(db, "videos", "youtube_video_id", "TEXT NOT NULL DEFAULT ''")
         ensure_column(db, "videos", "thumbnail_url", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(
+            db,
+            "videos",
+            "chinese_translation_status",
+            "TEXT NOT NULL DEFAULT 'idle'",
+        )
+        ensure_column(
+            db,
+            "videos",
+            "chinese_translation_error",
+            "TEXT NOT NULL DEFAULT ''",
+        )
 
 
 def ensure_column(
@@ -834,6 +968,8 @@ def ensure_mock_video(db: sqlite3.Connection) -> int:
 
 
 def upsert_imported_video(db: sqlite3.Connection, imported: ImportedVideo) -> int:
+    has_chinese = any(line.zh.strip() for line in imported.subtitles)
+    translation_status = "complete" if has_chinese else "idle"
     existing = db.execute(
         """
         SELECT id FROM videos
@@ -854,6 +990,8 @@ def upsert_imported_video(db: sqlite3.Connection, imported: ImportedVideo) -> in
                 duration = ?,
                 thumbnail_url = ?,
                 summary = ?,
+                chinese_translation_status = ?,
+                chinese_translation_error = '',
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -865,6 +1003,7 @@ def upsert_imported_video(db: sqlite3.Connection, imported: ImportedVideo) -> in
                 imported.duration,
                 imported.thumbnail_url,
                 imported.summary,
+                translation_status,
                 video_id,
             ),
         )
@@ -874,9 +1013,9 @@ def upsert_imported_video(db: sqlite3.Connection, imported: ImportedVideo) -> in
             """
             INSERT INTO videos (
               youtube_url, youtube_video_id, title, channel, duration, thumbnail_tone,
-              thumbnail_url, summary, last_position
+              thumbnail_url, summary, last_position, chinese_translation_status, chinese_translation_error
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 imported.youtube_url,
@@ -888,6 +1027,8 @@ def upsert_imported_video(db: sqlite3.Connection, imported: ImportedVideo) -> in
                 imported.thumbnail_url,
                 imported.summary,
                 "00:00",
+                translation_status,
+                "",
             ),
         )
         video_id = int(cursor.lastrowid)
@@ -986,7 +1127,34 @@ def video_payload(db: sqlite3.Connection, video_id: int) -> dict[str, Any]:
         ).fetchall()
     ]
     video["subtitles"] = subtitles
+    counts = subtitle_translation_counts(db, video_id)
+    video["chinese_translation_total"] = counts["total"]
+    video["chinese_translation_count"] = counts["translated"]
     return video
+
+
+def queue_chinese_translation_if_needed(
+    db: sqlite3.Connection,
+    video_id: int,
+    background_tasks: BackgroundTasks,
+) -> None:
+    counts = subtitle_translation_counts(db, video_id)
+    if not counts["total"] or counts["translated"] >= counts["total"]:
+        update_chinese_translation_status(db, video_id, "complete")
+        return
+    if not has_ai_builder_token():
+        update_chinese_translation_status(
+            db,
+            video_id,
+            "failed",
+            "当前未连接 Builder API，无法生成中文字幕。",
+        )
+        return
+    video = get_video_or_404(db, video_id)
+    if video["chinese_translation_status"] == "running":
+        return
+    update_chinese_translation_status(db, video_id, "pending")
+    background_tasks.add_task(generate_chinese_subtitles_task, video_id)
 
 
 @app.on_event("startup")
@@ -1014,7 +1182,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/api/videos/import")
-def import_video(request: ImportVideoRequest) -> dict[str, Any]:
+def import_video(request: ImportVideoRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
     if request.url == MOCK_URL:
         with connect() as db:
             video_id = ensure_mock_video(db)
@@ -1031,6 +1199,7 @@ def import_video(request: ImportVideoRequest) -> dict[str, Any]:
     imported = fetch_youtube_video(request.url)
     with connect() as db:
         video_id = upsert_imported_video(db, imported)
+        queue_chinese_translation_if_needed(db, video_id, background_tasks)
         return video_payload(db, video_id)
 
 
@@ -1055,6 +1224,36 @@ def list_videos() -> list[dict[str, Any]]:
 def get_video(video_id: int) -> dict[str, Any]:
     with connect() as db:
         return video_payload(db, video_id)
+
+
+@app.get("/api/videos/{video_id}/translation-status")
+def get_translation_status(video_id: int) -> dict[str, Any]:
+    with connect() as db:
+        video = get_video_or_404(db, video_id)
+        counts = subtitle_translation_counts(db, video_id)
+        return {
+            "video_id": video_id,
+            "status": video["chinese_translation_status"],
+            "error": video["chinese_translation_error"],
+            "total": counts["total"],
+            "translated": counts["translated"],
+        }
+
+
+@app.post("/api/videos/{video_id}/translate-subtitles")
+def translate_video_subtitles(video_id: int, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    with connect() as db:
+        get_video_or_404(db, video_id)
+        queue_chinese_translation_if_needed(db, video_id, background_tasks)
+        video = get_video_or_404(db, video_id)
+        counts = subtitle_translation_counts(db, video_id)
+        return {
+            "video_id": video_id,
+            "status": video["chinese_translation_status"],
+            "error": video["chinese_translation_error"],
+            "total": counts["total"],
+            "translated": counts["translated"],
+        }
 
 
 @app.get("/api/expression-cards")

@@ -151,6 +151,7 @@
                 <button class="chip" type="button" data-caption="none">隐藏</button>
               </div>
             </div>
+            <div class="translation-status" id="translationStatus" hidden></div>
             <div class="subtitle-list" id="subtitleList" aria-label="字幕列表"></div>
             <div class="selection-popover" id="selectionPopover" hidden>
               <div class="selection-actions">
@@ -202,7 +203,7 @@
 
     <script>
       document.write(
-        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=ui-import-feedback-1"><\/script>`,
+        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=async-zh-subtitles-1"><\/script>`,
       );
     </script>
   </body>
