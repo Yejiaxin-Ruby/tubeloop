@@ -12,6 +12,7 @@ const selectionTranslateButton = document.querySelector("#selectionTranslateButt
 const selectionSaveButton = document.querySelector("#selectionSaveButton");
 const selectionResult = document.querySelector("#selectionResult");
 const saveToast = document.querySelector("#saveToast");
+const saveToastIcon = document.querySelector(".save-toast-icon");
 const saveToastText = document.querySelector("#saveToastText");
 const currentCaption = document.querySelector("#currentCaption");
 const statusText = document.querySelector("#statusText");
@@ -23,6 +24,7 @@ const videoTitle = document.querySelector("#videoTitle");
 const videoChannel = document.querySelector("#videoChannel");
 const videoDuration = document.querySelector("#videoDuration");
 const videoThumbnail = document.querySelector(".video-thumbnail");
+const youtubePlayerElement = document.querySelector("#youtubePlayer");
 const playbackProgress = document.querySelector("#playbackProgress");
 const playbackTime = document.querySelector("#playbackTime");
 const voiceButton = document.querySelector("#voiceButton");
@@ -34,7 +36,6 @@ const speedRange = document.querySelector("#speedRange");
 const speedLabel = document.querySelector("#speedLabel");
 const globalPanel = document.querySelector("#globalPanel");
 const videoUrlInput = document.querySelector("#videoUrl");
-const demoVideoButton = document.querySelector("#demoVideoButton");
 let isListening = false;
 let mediaRecorder = null;
 let audioChunks = [];
@@ -50,7 +51,6 @@ let youtubePlayer = null;
 let youtubePlayerReady = false;
 let youtubeApiPromise = null;
 let currentYoutubeVideoId = "";
-const demoYoutubeUrl = "https://www.youtube.com/watch?v=arj7oStGLkU";
 const publicAppUrl = "https://tubeloop.ai-builders.space/";
 
 const fileModeVideo = {
@@ -184,6 +184,15 @@ function renderSubtitles() {
     return;
   }
 
+  if (captionMode === "none") {
+    const hidden = document.createElement("article");
+    hidden.className = "subtitle-line is-active subtitle-hidden-state";
+    hidden.innerHTML = `<div class="subtitle-text"><p class="zh-text">字幕已隐藏</p></div>`;
+    subtitleList.append(hidden);
+    updateCaption();
+    return;
+  }
+
   subtitles.forEach((line, index) => {
     const row = document.createElement("article");
     row.className = `subtitle-line${index === activeIndex ? " is-active" : ""}`;
@@ -210,13 +219,6 @@ function renderSubtitles() {
       textWrap.append(zh);
     }
 
-    if (captionMode === "none") {
-      const hidden = document.createElement("p");
-      hidden.className = "zh-text";
-      hidden.textContent = "字幕已隐藏";
-      textWrap.append(hidden);
-    }
-
     row.append(timestamp, textWrap);
     row.addEventListener("click", () => {
       const selectedText = window.getSelection()?.toString().trim();
@@ -227,6 +229,13 @@ function renderSubtitles() {
   });
 
   updateCaption();
+}
+
+function markActiveSubtitle() {
+  if (captionMode === "none") return;
+  subtitleList.querySelectorAll(".subtitle-line").forEach((row) => {
+    row.classList.toggle("is-active", Number(row.dataset.index) === activeIndex);
+  });
 }
 
 function updateCaption() {
@@ -257,10 +266,15 @@ function scrollActiveSubtitleIntoView() {
 }
 
 function seekToActiveLine({ play = false } = {}) {
-  if (!subtitles.length || !youtubePlayerReady || !youtubePlayer?.seekTo) return;
-  youtubePlayer.seekTo(getLineStartSeconds(subtitles[activeIndex]), true);
-  if (play && youtubePlayer.playVideo) {
-    youtubePlayer.playVideo();
+  if (!subtitles.length) return;
+  const startSeconds = getLineStartSeconds(subtitles[activeIndex]);
+  if (youtubePlayerReady && youtubePlayer?.seekTo) {
+    youtubePlayer.seekTo(startSeconds, true);
+    if (play && youtubePlayer.playVideo) {
+      youtubePlayer.playVideo();
+    }
+  } else if (currentYoutubeVideoId) {
+    renderYoutubeIframe(currentYoutubeVideoId, { startSeconds, autoplay: play });
   }
   updatePlaybackProgress();
 }
@@ -273,16 +287,23 @@ function advancePlayback() {
   setActiveLine(activeIndex + 1, { seek: true, play: isPlaying });
 }
 
-function showSaveToast(message = "已加入表达库") {
+function showSaveToast(message = "已加入表达库", options = {}) {
   if (!saveToast || !saveToastText) return;
   window.clearTimeout(saveToastTimer);
   window.clearTimeout(saveToastHideTimer);
 
+  const variant = options.variant || "success";
+  if (saveToastIcon) {
+    saveToastIcon.textContent = variant === "loading" ? "…" : variant === "error" ? "!" : "✓";
+  }
+  saveToast.dataset.variant = variant;
   saveToastText.textContent = message;
   saveToast.hidden = false;
   window.requestAnimationFrame(() => {
     saveToast.classList.add("is-visible");
   });
+
+  if (options.sticky) return;
 
   saveToastTimer = window.setTimeout(() => {
     saveToast.classList.remove("is-visible");
@@ -290,6 +311,16 @@ function showSaveToast(message = "已加入表达库") {
       saveToast.hidden = true;
     }, 180);
   }, 1800);
+}
+
+function hideSaveToast() {
+  if (!saveToast) return;
+  window.clearTimeout(saveToastTimer);
+  window.clearTimeout(saveToastHideTimer);
+  saveToast.classList.remove("is-visible");
+  saveToastHideTimer = window.setTimeout(() => {
+    saveToast.hidden = true;
+  }, 180);
 }
 
 async function saveSelectedExpression() {
@@ -555,20 +586,57 @@ function setTransportIcon(nextIsPlaying) {
   videoThumbnail.classList.toggle("is-playing", nextIsPlaying);
 }
 
+function renderYoutubeIframe(videoId, options = {}) {
+  if (!youtubePlayerElement || !videoId) return;
+  const params = new URLSearchParams({
+    enablejsapi: "1",
+    playsinline: "1",
+    rel: "0",
+    modestbranding: "1",
+    controls: "1",
+    origin: window.location.origin,
+  });
+  if (options.autoplay) params.set("autoplay", "1");
+  if (Number(options.startSeconds) > 0) {
+    params.set("start", String(Math.floor(Number(options.startSeconds))));
+  }
+  youtubePlayerElement.innerHTML = `
+    <iframe
+      id="youtubePlayerFrame"
+      title="YouTube video player"
+      src="https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+      allowfullscreen
+    ></iframe>
+  `;
+}
+
 function loadYoutubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (youtubeApiPromise) return youtubeApiPromise;
   youtubeApiPromise = new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(new Error("YouTube 精听控制加载超时，播放器仍可直接播放。"));
+    }, 6000);
     const previousReady = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
+      window.clearTimeout(timeout);
       previousReady?.();
       resolve(window.YT);
     };
-    const script = document.createElement("script");
-    script.src = "https://www.youtube.com/iframe_api";
-    script.async = true;
-    script.onerror = () => reject(new Error("YouTube 播放器加载失败"));
-    document.head.append(script);
+    const existingScript = Array.from(document.scripts).find((script) =>
+      script.src.includes("youtube.com/iframe_api"),
+    );
+    if (!existingScript) {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      script.onerror = () => {
+        window.clearTimeout(timeout);
+        reject(new Error("YouTube 精听控制加载失败，播放器仍可直接播放。"));
+      };
+      document.head.append(script);
+    }
   });
   return youtubeApiPromise;
 }
@@ -594,8 +662,8 @@ function syncPlayerState() {
   const nextIndex = findSubtitleIndexByTime(currentSeconds);
   if (nextIndex !== activeIndex) {
     activeIndex = nextIndex;
-    renderSubtitles();
-    scrollActiveSubtitleIntoView();
+    markActiveSubtitle();
+    updateCaption();
   } else {
     updateCaption();
   }
@@ -605,52 +673,42 @@ async function setupYoutubePlayer(video) {
   currentYoutubeVideoId = video.youtube_video_id || "";
   youtubePlayerReady = false;
   stopPlayerSync();
+  youtubePlayer?.destroy?.();
+  youtubePlayer = null;
   videoThumbnail.classList.toggle("has-player", Boolean(currentYoutubeVideoId));
 
   if (!currentYoutubeVideoId) {
+    youtubePlayerElement.replaceChildren();
     setTransportIcon(false);
     return;
   }
 
+  renderYoutubeIframe(currentYoutubeVideoId);
+
   try {
     const YT = await loadYoutubeApi();
-    if (!youtubePlayer) {
-      youtubePlayer = new YT.Player("youtubePlayer", {
-        videoId: currentYoutubeVideoId,
-        playerVars: {
-          playsinline: 1,
-          rel: 0,
-          modestbranding: 1,
-          controls: 1,
+    youtubePlayer = new YT.Player("youtubePlayerFrame", {
+      events: {
+        onReady: (event) => {
+          youtubePlayerReady = true;
+          event.target.setPlaybackRate?.(playbackSpeed);
+          updatePlaybackProgress();
         },
-        events: {
-          onReady: (event) => {
-            youtubePlayerReady = true;
-            event.target.setPlaybackRate?.(playbackSpeed);
-            event.target.cueVideoById?.(currentYoutubeVideoId);
-            updatePlaybackProgress();
-          },
-          onStateChange: (event) => {
-            const state = event.data;
-            isPlaying = state === YT.PlayerState.PLAYING;
-            setTransportIcon(isPlaying);
-            if (isPlaying) {
-              startPlayerSync();
-            } else if (state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) {
-              stopPlayerSync();
-              syncPlayerState();
-            }
-          },
+        onStateChange: (event) => {
+          const state = event.data;
+          isPlaying = state === YT.PlayerState.PLAYING;
+          setTransportIcon(isPlaying);
+          if (isPlaying) {
+            startPlayerSync();
+          } else if (state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) {
+            stopPlayerSync();
+            syncPlayerState();
+          }
         },
-      });
-    } else {
-      youtubePlayerReady = true;
-      youtubePlayer.cueVideoById(currentYoutubeVideoId);
-      youtubePlayer.setPlaybackRate?.(playbackSpeed);
-      updatePlaybackProgress();
-    }
+      },
+    });
   } catch (error) {
-    statusText.textContent = error.message;
+    console.warn(error.message);
   }
 }
 
@@ -744,25 +802,18 @@ document.querySelector("#importForm").addEventListener("submit", async (event) =
   }
   try {
     statusText.textContent = "正在读取 YouTube 视频和字幕，这可能需要几十秒...";
+    showSaveToast("视频正在加载中", { sticky: true, variant: "loading" });
     const video = await apiFetch("/videos/import", {
       method: "POST",
       body: JSON.stringify({ url: videoUrlInput.value }),
     });
     setCurrentVideo(video);
     await Promise.all([loadCards(), loadHistory()]);
+    showSaveToast("载入成功", { variant: "success" });
   } catch (error) {
     statusText.textContent = error.message;
+    showSaveToast("载入失败", { variant: "error" });
   }
-});
-
-demoVideoButton.addEventListener("click", () => {
-  if (location.protocol === "file:") {
-    window.location.href = publicAppUrl;
-    return;
-  }
-  videoUrlInput.value = demoYoutubeUrl;
-  statusText.textContent = "已填入示例视频，点击导入即可开始体验。";
-  videoUrlInput.focus();
 });
 
 document.querySelectorAll(".chip").forEach((button) => {
@@ -821,6 +872,17 @@ function setPlayState(nextState) {
       stopPlayerSync();
       updatePlaybackProgress();
     }
+    return;
+  }
+
+  if (currentYoutubeVideoId) {
+    renderYoutubeIframe(currentYoutubeVideoId, {
+      startSeconds: subtitles.length ? getLineStartSeconds(subtitles[activeIndex]) : 0,
+      autoplay: isPlaying,
+    });
+    statusText.textContent = isPlaying
+      ? "正在使用 YouTube 原生播放器播放。"
+      : "已暂停。";
     return;
   }
 

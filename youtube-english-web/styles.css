@@ -178,9 +178,23 @@ button {
   background: var(--white);
 }
 
+.save-toast[data-variant="loading"] .save-toast-icon {
+  color: var(--text);
+  background: #2b2b2b;
+}
+
+.save-toast[data-variant="error"] {
+  border-color: rgba(255, 75, 75, 0.38);
+}
+
+.save-toast[data-variant="error"] .save-toast-icon {
+  color: #fff;
+  background: var(--red);
+}
+
 .import-bar {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   gap: 10px;
   align-items: center;
 }
@@ -243,7 +257,7 @@ button {
 .global-panel-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -265,12 +279,13 @@ button {
 }
 
 .back-home-button {
+  flex: 0 0 auto;
   min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
+  padding: 0 16px;
+  border: 1px solid var(--white);
   border-radius: 8px;
-  color: var(--text-soft);
-  background: #101010;
+  color: #111;
+  background: var(--white);
   font-weight: 900;
 }
 
@@ -473,6 +488,10 @@ button {
 
 .video-thumbnail.is-playing .video-grain {
   animation: grain-roll 1.8s linear infinite;
+}
+
+.player-placeholder {
+  display: none !important;
 }
 
 .video-title {
@@ -944,6 +963,20 @@ button {
   background: #1e1e1e;
 }
 
+.subtitle-hidden-state {
+  min-height: 180px;
+  align-content: center;
+}
+
+.subtitle-hidden-state .timestamp {
+  display: none;
+}
+
+.subtitle-hidden-state .subtitle-text {
+  grid-column: 1 / -1;
+  text-align: center;
+}
+
 .timestamp {
   padding-top: 2px;
   color: var(--text-dim);
@@ -1216,7 +1249,7 @@ button {
   }
 
   .global-panel-head {
-    align-items: stretch;
+    align-items: flex-start;
     flex-direction: column;
   }
 

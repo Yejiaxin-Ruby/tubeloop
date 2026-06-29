@@ -575,7 +575,9 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
     if chinese_lines:
         translations = [match_translation_line(line, chinese_lines) for line in english_lines]
     else:
-        translations = translate_caption_lines(english_lines)
+        # Keep video import fast and reliable. Chinese generation can be added as a
+        # follow-up enhancement, but it should not block playback and English captions.
+        translations = [""] * len(english_lines)
 
     subtitles = [
         ImportedSubtitle(

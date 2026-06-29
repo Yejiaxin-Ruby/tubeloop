@@ -33,7 +33,6 @@
             type="url"
             placeholder="粘贴 1 小时以内的 YouTube 视频链接"
           />
-          <button class="secondary-button" type="button" id="demoVideoButton">示例</button>
           <button class="primary-button" type="submit">导入</button>
         </form>
       </header>
@@ -41,11 +40,11 @@
       <section class="global-panel" id="globalPanel" hidden>
         <div class="global-view" id="historyView" aria-label="历史视频">
           <div class="global-panel-head">
+            <button class="back-home-button" type="button" id="closeGlobalPanel">返回主页</button>
             <div>
               <h2>历史视频</h2>
               <p>回到之前导入过的视频继续学习</p>
             </div>
-            <button class="back-home-button" type="button" id="closeGlobalPanel">返回主页</button>
           </div>
 
           <div class="history-list" id="historyList"></div>
@@ -53,11 +52,11 @@
 
         <div class="global-view" id="libraryView" aria-label="表达库">
           <div class="global-panel-head">
+            <button class="back-home-button" type="button" id="closeLibraryPanel">返回主页</button>
             <div>
               <h2>表达库</h2>
               <p id="cardCount">已保存 3 条</p>
             </div>
-            <button class="back-home-button" type="button" id="closeLibraryPanel">返回主页</button>
           </div>
           <div class="card-list" id="cardList"></div>
         </div>
@@ -68,32 +67,32 @@
           <section class="video-card" aria-label="视频播放器">
             <div class="video-thumbnail">
               <div class="youtube-player" id="youtubePlayer" aria-label="YouTube 播放器"></div>
-              <div class="video-grain" aria-hidden="true"></div>
-              <div class="video-title">
+              <div class="video-grain player-placeholder" aria-hidden="true"></div>
+              <div class="video-title player-placeholder">
                 <span class="channel-avatar" aria-hidden="true"></span>
                 <div>
                   <h2 id="videoTitle">粘贴 YouTube 链接开始</h2>
                   <p id="videoChannel">支持 1 小时以内且带英文字幕的视频</p>
                 </div>
               </div>
-              <button class="youtube-play" type="button" id="playButton" aria-label="播放或暂停">
+              <button class="youtube-play player-placeholder" type="button" id="playButton" aria-label="播放或暂停">
                 <span id="playIcon">▶</span>
               </button>
-              <div class="youtube-link">
+              <div class="youtube-link player-placeholder">
                 <span>前往平台观看：</span>
                 <strong>YouTube</strong>
               </div>
-              <div class="video-badges" aria-hidden="true">
+              <div class="video-badges player-placeholder" aria-hidden="true">
                 <span>4K</span>
                 <span id="videoDuration">00:00</span>
               </div>
-              <div class="current-caption" id="currentCaption">
+              <div class="current-caption player-placeholder" id="currentCaption">
                 导入视频后，这里会显示当前句字幕。
               </div>
-              <div class="playback-bar" aria-label="播放进度">
+              <div class="playback-bar player-placeholder" aria-label="播放进度">
                 <span id="playbackProgress"></span>
               </div>
-              <div class="playback-time" id="playbackTime">00:00 / 00:00</div>
+              <div class="playback-time player-placeholder" id="playbackTime">00:00 / 00:00</div>
             </div>
           </section>
 
@@ -203,7 +202,7 @@
 
     <script>
       document.write(
-        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=voice-feedback-1"><\/script>`,
+        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=ui-import-feedback-1"><\/script>`,
       );
     </script>
   </body>
