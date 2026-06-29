@@ -450,9 +450,26 @@ function setListening(nextState) {
   voiceButton.setAttribute("aria-label", isListening ? "停止语音输入" : "语音输入");
 }
 
-async function uploadAudioForTranscription(blob) {
+function supportedAudioMimeType() {
+  if (!window.MediaRecorder?.isTypeSupported) return "";
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || "";
+}
+
+function audioFileName(mimeType) {
+  if (mimeType.includes("mp4")) return "voice-input.m4a";
+  if (mimeType.includes("ogg")) return "voice-input.ogg";
+  return "voice-input.webm";
+}
+
+async function uploadAudioForTranscription(blob, filename) {
   const formData = new FormData();
-  formData.append("file", blob, "voice-input.webm");
+  formData.append("file", blob, filename);
   const response = await fetch(`${apiBase}/audio/transcriptions`, {
     method: "POST",
     body: formData,
@@ -466,16 +483,17 @@ async function uploadAudioForTranscription(blob) {
 
 async function startVoiceInput() {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    chatText.value = "I learned that meaningful input helps me think in English.";
-    statusText.textContent = "当前浏览器不支持录音，已填入一条测试文本。";
+    chatText.placeholder = "当前浏览器不支持录音，请直接输入文字。";
+    statusText.textContent = "当前浏览器不支持录音，请直接输入文字。";
     chatText.focus();
     return;
   }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = supportedAudioMimeType();
     audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
     mediaRecorder.addEventListener("dataavailable", (event) => {
       if (event.data.size > 0) {
@@ -486,30 +504,38 @@ async function startVoiceInput() {
     mediaRecorder.addEventListener("stop", async () => {
       setListening(false);
       stream.getTracks().forEach((track) => track.stop());
+      chatText.placeholder = "正在转写语音...";
       statusText.textContent = "正在转写语音...";
 
       try {
-        const blob = new Blob(audioChunks, { type: "audio/webm" });
-        const result = await uploadAudioForTranscription(blob);
+        if (!audioChunks.length) {
+          throw new Error("没有录到声音，请确认麦克风权限已开启");
+        }
+        const actualMimeType = mediaRecorder.mimeType || mimeType || "audio/webm";
+        const blob = new Blob(audioChunks, { type: actualMimeType });
+        const result = await uploadAudioForTranscription(blob, audioFileName(actualMimeType));
         chatText.value = result.text || "";
         statusText.textContent = chatText.value.trim()
           ? "语音已转成文字，可以发送给 AI。"
           : "没有识别到内容，可以再试一次。";
+        chatText.placeholder = "输入你想和 AI 讨论的内容";
         chatText.focus();
       } catch (error) {
-        chatText.value = "I learned that meaningful input helps me think in English.";
-        statusText.textContent = `${error.message}；已填入一条测试文本。`;
+        chatText.placeholder = "语音转文字失败，请重试或直接输入文字。";
+        statusText.textContent = `语音转文字失败：${error.message}`;
         chatText.focus();
       }
     });
 
     mediaRecorder.start();
     setListening(true);
+    chatText.value = "";
+    chatText.placeholder = "正在录音...再点一次红色按钮结束";
     statusText.textContent = "正在录音，再点一次红色按钮结束。";
   } catch (error) {
     setListening(false);
-    chatText.value = "I learned that meaningful input helps me think in English.";
-    statusText.textContent = "无法使用麦克风，已填入一条测试文本。";
+    chatText.placeholder = "无法使用麦克风，请允许浏览器麦克风权限。";
+    statusText.textContent = `无法使用麦克风：${error.message}`;
     chatText.focus();
   }
 }
