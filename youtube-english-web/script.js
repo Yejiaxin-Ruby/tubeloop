@@ -51,6 +51,7 @@ let youtubePlayerReady = false;
 let youtubeApiPromise = null;
 let currentYoutubeVideoId = "";
 const demoYoutubeUrl = "https://www.youtube.com/watch?v=arj7oStGLkU";
+const publicAppUrl = "https://tubeloop.ai-builders.space/";
 
 const fileModeVideo = {
   id: 1,
@@ -684,11 +685,18 @@ async function loadHistory() {
 
 async function loadInitialData() {
   if (location.protocol === "file:") {
-    setCurrentVideo(fileModeVideo);
+    currentVideoId = null;
+    subtitles = [];
+    activeIndex = 0;
+    videoTitle.textContent = "请打开线上版 Tubeloop";
+    videoChannel.textContent = publicAppUrl;
+    videoDuration.textContent = "在线";
+    currentCaption.textContent = "当前是静态 HTML 文件，不能解析 YouTube，也不能读取字幕。";
     cards = [];
     renderCards();
     renderHistory([]);
-    statusText.textContent = "当前是静态预览；完整功能请打开 http://127.0.0.1:8011/";
+    renderSubtitles();
+    statusText.textContent = "当前打开的是静态文件。请使用线上地址：https://tubeloop.ai-builders.space/";
     return;
   }
 
@@ -703,6 +711,11 @@ async function loadInitialData() {
 
 document.querySelector("#importForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (location.protocol === "file:") {
+    statusText.textContent = "正在打开线上版 Tubeloop...";
+    window.location.href = publicAppUrl;
+    return;
+  }
   try {
     statusText.textContent = "正在读取 YouTube 视频和字幕，这可能需要几十秒...";
     const video = await apiFetch("/videos/import", {
@@ -717,6 +730,10 @@ document.querySelector("#importForm").addEventListener("submit", async (event) =
 });
 
 demoVideoButton.addEventListener("click", () => {
+  if (location.protocol === "file:") {
+    window.location.href = publicAppUrl;
+    return;
+  }
   videoUrlInput.value = demoYoutubeUrl;
   statusText.textContent = "已填入示例视频，点击导入即可开始体验。";
   videoUrlInput.focus();
