@@ -285,9 +285,27 @@ def format_seconds(total_seconds: float) -> str:
 def clean_caption_text(text: str) -> str:
     text = html.unescape(text)
     text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"&[a-zA-Z]+;", " ", text)
     text = text.replace("\xa0", " ")
+    text = text.replace("♪", " ")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def is_caption_noise(text: str) -> bool:
+    normalized = clean_caption_text(text).lower()
+    normalized = normalized.strip("[](){}-:：.。!！?？,， ")
+    if not normalized:
+        return True
+    return normalized in {
+        "music",
+        "applause",
+        "laughter",
+        "laughs",
+        "silence",
+        "background music",
+        "foreign",
+    }
 
 
 def parse_vtt_timestamp(value: str) -> float:
@@ -307,7 +325,7 @@ def parse_json3_captions(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for event in payload.get("events", []):
         segs = event.get("segs") or []
         text = clean_caption_text("".join(str(seg.get("utf8", "")) for seg in segs))
-        if not text:
+        if not text or is_caption_noise(text):
             continue
         start = float(event.get("tStartMs") or 0) / 1000
         duration = float(event.get("dDurationMs") or 0) / 1000
@@ -325,7 +343,7 @@ def parse_vtt_captions(text: str) -> list[dict[str, Any]]:
         nonlocal pending_time, pending_text
         if pending_time and pending_text:
             caption_text = clean_caption_text(" ".join(pending_text))
-            if caption_text:
+            if caption_text and not is_caption_noise(caption_text):
                 captions.append(
                     {
                         "start_seconds": pending_time[0],
@@ -435,7 +453,7 @@ def transcript_to_caption_lines(fetched: Any) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
     for snippet in fetched:
         text = clean_caption_text(str(transcript_snippet_value(snippet, "text", "")))
-        if not text:
+        if not text or is_caption_noise(text):
             continue
         start = float(transcript_snippet_value(snippet, "start", 0) or 0)
         duration = float(transcript_snippet_value(snippet, "duration", 0) or 0)
@@ -689,7 +707,9 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
 
     english_lines = [
         line for line in english_lines
-        if line.get("text") and float(line.get("end_seconds", 0)) > float(line.get("start_seconds", 0))
+        if line.get("text")
+        and not is_caption_noise(str(line.get("text", "")))
+        and float(line.get("end_seconds", 0)) > float(line.get("start_seconds", 0))
     ]
     if not english_lines:
         raise HTTPException(status_code=400, detail="英文字幕为空。请换一个字幕内容更完整的视频。")

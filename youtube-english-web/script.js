@@ -713,7 +713,11 @@ function renderYoutubeIframe(videoId, options = {}) {
     playsinline: "1",
     rel: "0",
     modestbranding: "1",
-    controls: "1",
+    controls: "0",
+    cc_load_policy: "0",
+    disablekb: "1",
+    fs: "0",
+    iv_load_policy: "3",
     origin: window.location.origin,
   });
   if (options.autoplay) params.set("autoplay", "1");
