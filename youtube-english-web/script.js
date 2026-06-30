@@ -185,8 +185,8 @@ function renderSubtitles() {
 
   if (!subtitles.length) {
     const empty = document.createElement("article");
-    empty.className = "subtitle-line is-active";
-    empty.innerHTML = `<div class="timestamp">--:--</div><div class="subtitle-text"><p class="zh-text">粘贴 YouTube 链接后，这里会出现可点击学习的字幕。</p></div>`;
+    empty.className = "subtitle-line is-active subtitle-hidden-state";
+    empty.innerHTML = `<div class="subtitle-text"><p class="zh-text">粘贴 YouTube 链接后，这里会出现可点击学习的字幕。</p></div>`;
     subtitleList.append(empty);
     updateCaption();
     return;
