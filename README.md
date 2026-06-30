@@ -56,8 +56,9 @@ AI_BUILDER_TOKEN
 APP_DB_PATH=/app/data/youtube_learning.sqlite3
 AI_BUILDER_CHAT_MODEL=gpt-5
 AI_BUILDER_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+SUPADATA_API_KEY=your_supadata_api_key
 ```
 
 ## 备注
 
-当前 MVP 支持 1 小时以内、可读取英文字幕的 YouTube 视频。少数无字幕、字幕被关闭或被 YouTube 限制访问的视频会导入失败。
+当前 MVP 支持 1 小时以内、可读取英文字幕的 YouTube 视频。配置 `SUPADATA_API_KEY` 后会优先通过 Supadata 读取 YouTube 信息和字幕；未配置时会回退到内置字幕读取方案。少数无字幕、字幕被关闭或被 YouTube 限制访问的视频仍可能导入失败。

@@ -28,6 +28,7 @@ MOCK_URL = "https://www.youtube.com/watch?v=mock-english-thinking"
 AI_BUILDER_BASE_URL = "https://space.ai-builders.com/backend/v1"
 AI_BUILDER_CHAT_MODEL = "gpt-5"
 AI_BUILDER_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
+SUPADATA_BASE_URL = "https://api.supadata.ai/v1"
 MAX_VIDEO_SECONDS = 60 * 60
 CAPTION_BREAK_PATTERN = re.compile(r"[,.!?;:，。！？；：]$")
 MAX_MERGED_CAPTION_CHARS = 140
@@ -197,6 +198,10 @@ def has_ai_builder_token() -> bool:
     return bool(get_ai_builder_token())
 
 
+def get_supadata_key() -> str | None:
+    return os.getenv("SUPADATA_API_KEY")
+
+
 def call_builder_chat(
     messages: list[dict[str, str]],
     *,
@@ -273,6 +278,29 @@ def extract_youtube_video_id(url: str) -> str | None:
 
 def normalized_youtube_url(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def parse_duration_seconds(value: Any) -> int:
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    if not isinstance(value, str):
+        return 0
+    text = value.strip()
+    if not text:
+        return 0
+    if text.isdigit():
+        return int(text)
+    if ":" in text:
+        parts = [int(part) for part in text.split(":") if part.isdigit()]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        if len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+    match = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", text)
+    if match:
+        hours, minutes, seconds = (int(part or 0) for part in match.groups())
+        return hours * 3600 + minutes * 60 + seconds
+    return 0
 
 
 def format_seconds(total_seconds: float) -> str:
@@ -472,6 +500,174 @@ def fetch_caption_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]
     if last_error:
         raise last_error
     return []
+
+
+def supadata_segments_to_caption_lines(segments: list[Any]) -> list[dict[str, Any]]:
+    if not segments:
+        return []
+
+    sample_values: list[float] = []
+    for item in segments[:5]:
+        if not isinstance(item, dict):
+            continue
+        raw_start = item.get("offset", item.get("start", 0))
+        try:
+            value = float(raw_start or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            sample_values.append(value)
+    is_milliseconds = bool(sample_values) and (sum(sample_values) / len(sample_values)) > 500
+
+    lines: list[dict[str, Any]] = []
+    for item in segments:
+        if not isinstance(item, dict):
+            continue
+        text = clean_caption_text(str(item.get("text") or item.get("content") or ""))
+        if not text or is_caption_noise(text):
+            continue
+        try:
+            raw_start = float(item.get("offset", item.get("start", 0)) or 0)
+            raw_duration = float(item.get("duration", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        start = raw_start / 1000 if is_milliseconds else raw_start
+        duration = raw_duration / 1000 if is_milliseconds else raw_duration
+        lines.append(
+            {
+                "start_seconds": start,
+                "end_seconds": start + max(duration, 0.5),
+                "text": text,
+            },
+        )
+    return lines
+
+
+def supadata_response_segments(payload: Any) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ("content", "transcript", "segments"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def fetch_supadata_transcript_lines(
+    video_id: str,
+    lang: str | None = "en",
+) -> list[dict[str, Any]]:
+    api_key = get_supadata_key()
+    if not api_key:
+        return []
+
+    params = {"url": normalized_youtube_url(video_id)}
+    if lang:
+        params["lang"] = lang
+    with httpx.Client(timeout=45, follow_redirects=True) as client:
+        response = client.get(
+            f"{SUPADATA_BASE_URL}/transcript",
+            params=params,
+            headers={"x-api-key": api_key, "Content-Type": "application/json"},
+        )
+
+    if response.status_code == 404:
+        return []
+    if not response.is_success or response.status_code == 206:
+        raise RuntimeError(f"Supadata transcript failed: {response.status_code} {response.text[:200]}")
+
+    segments = supadata_response_segments(response.json())
+    return supadata_segments_to_caption_lines(segments)
+
+
+def fetch_supadata_english_lines(video_id: str) -> list[dict[str, Any]]:
+    if not get_supadata_key():
+        return []
+    for lang in ("en", None):
+        lines = fetch_supadata_transcript_lines(video_id, lang)
+        if lines:
+            return lines
+    return []
+
+
+def fetch_supadata_video_info(video_id: str) -> dict[str, Any]:
+    api_key = get_supadata_key()
+    if not api_key:
+        return {}
+    try:
+        with httpx.Client(timeout=30, follow_redirects=True) as client:
+            response = client.get(
+                f"{SUPADATA_BASE_URL}/youtube/video",
+                params={"id": video_id},
+                headers={"x-api-key": api_key, "Content-Type": "application/json"},
+            )
+        if not response.is_success:
+            print(f"[supadata video info failed] HTTP {response.status_code}: {response.text[:200]}", flush=True)
+            return {}
+        data = response.json()
+        return {
+            "title": data.get("title") or "YouTube Video",
+            "channel": (data.get("channel") or {}).get("name") if isinstance(data.get("channel"), dict) else data.get("author"),
+            "duration_seconds": parse_duration_seconds(data.get("duration")),
+            "thumbnail": data.get("thumbnail") or f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "description": data.get("description") or "",
+        }
+    except Exception as error:
+        print(f"[supadata video info failed] {type(error).__name__}: {error}", flush=True)
+        return {}
+
+
+def fetch_oembed_video_info(video_id: str) -> dict[str, Any]:
+    try:
+        with httpx.Client(timeout=15, follow_redirects=True) as client:
+            response = client.get(
+                "https://www.youtube.com/oembed",
+                params={"url": normalized_youtube_url(video_id), "format": "json"},
+            )
+        if not response.is_success:
+            return {}
+        data = response.json()
+        return {
+            "title": data.get("title") or "YouTube Video",
+            "channel": data.get("author_name") or "Unknown",
+            "duration_seconds": 0,
+            "thumbnail": data.get("thumbnail_url") or f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "description": "",
+        }
+    except Exception as error:
+        print(f"[youtube oembed failed] {type(error).__name__}: {error}", flush=True)
+        return {}
+
+
+def default_video_info(video_id: str) -> dict[str, Any]:
+    return {
+        "title": "YouTube Video",
+        "channel": "Unknown",
+        "duration_seconds": 0,
+        "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+        "description": "",
+    }
+
+
+def merge_video_info(base: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in fallback.items():
+        if key == "duration_seconds":
+            if not int(merged.get(key) or 0) and int(value or 0):
+                merged[key] = int(value)
+        elif not merged.get(key) and value:
+            merged[key] = value
+    return merged
+
+
+def fetch_video_info_with_fallback(video_id: str) -> dict[str, Any]:
+    info: dict[str, Any] = {}
+    info = merge_video_info(info, fetch_supadata_video_info(video_id))
+    info = merge_video_info(info, fetch_oembed_video_info(video_id))
+    info = merge_video_info(info, default_video_info(video_id))
+    return info
 
 
 def match_translation_line(
@@ -723,57 +919,77 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
     if not video_id:
         raise HTTPException(status_code=400, detail="请粘贴有效的 YouTube 视频链接")
 
-    try:
-        from yt_dlp import YoutubeDL
-    except ImportError as error:
-        raise HTTPException(status_code=500, detail="YouTube 解析依赖未安装") from error
-
-    ydl_options = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noplaylist": True,
-        "extract_flat": False,
-        "cachedir": False,
-    }
-    try:
-        with YoutubeDL(ydl_options) as ydl:
-            info = ydl.extract_info(normalized_youtube_url(video_id), download=False)
-    except Exception as error:
-        print(f"[youtube metadata failed] {type(error).__name__}: {error}", flush=True)
-        raise HTTPException(
-            status_code=502,
-            detail="暂时无法读取这个 YouTube 视频。请确认链接可公开访问，并稍后再试。",
-        ) from error
-
-    duration_seconds = int(info.get("duration") or 0)
+    info = fetch_video_info_with_fallback(video_id)
+    duration_seconds = int(info.get("duration_seconds") or 0)
     if duration_seconds and duration_seconds > MAX_VIDEO_SECONDS:
         raise HTTPException(status_code=400, detail="MVP 版本目前只支持 1 小时以内的视频")
 
+    english_lines: list[dict[str, Any]] = []
+    chinese_lines: list[dict[str, Any]] = []
+
     try:
-        english_lines, chinese_lines = fetch_transcript_caption_lines(video_id)
+        english_lines = fetch_supadata_english_lines(video_id)
+        if english_lines:
+            print(f"[supadata transcript] loaded {len(english_lines)} lines for {video_id}", flush=True)
     except Exception as error:
-        print(f"[transcript fallback] {type(error).__name__}: {error}", flush=True)
-        subtitle_tracks = info.get("subtitles") or {}
-        automatic_tracks = info.get("automatic_captions") or {}
-        english_track = choose_caption_track(subtitle_tracks, ("en",)) or choose_caption_track(
-            automatic_tracks,
-            ("en",),
-        )
-        if not english_track:
-            raise HTTPException(
-                status_code=400,
-                detail="这个视频没有可读取的英文字幕。请换一个开启英文字幕的视频。",
-            ) from error
+        print(f"[supadata transcript fallback] {type(error).__name__}: {error}", flush=True)
+
+    if not english_lines:
         try:
-            english_lines = fetch_caption_entries(english_track)
-        except Exception as caption_error:
-            print(f"[english caption failed] {type(caption_error).__name__}: {caption_error}", flush=True)
-            raise HTTPException(
-                status_code=502,
-                detail="英文字幕读取失败。请换一个开启英文字幕的视频，或稍后再试。",
-            ) from caption_error
-        chinese_lines = []
+            english_lines, chinese_lines = fetch_transcript_caption_lines(video_id)
+        except Exception as error:
+            print(f"[transcript fallback] {type(error).__name__}: {error}", flush=True)
+            try:
+                from yt_dlp import YoutubeDL
+            except ImportError as import_error:
+                raise HTTPException(status_code=500, detail="YouTube 解析依赖未安装") from import_error
+
+            ydl_options = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "noplaylist": True,
+                "extract_flat": False,
+                "cachedir": False,
+            }
+            try:
+                with YoutubeDL(ydl_options) as ydl:
+                    ytdlp_info = ydl.extract_info(normalized_youtube_url(video_id), download=False)
+                info = merge_video_info(
+                    info,
+                    {
+                        "title": ytdlp_info.get("title"),
+                        "channel": ytdlp_info.get("channel") or ytdlp_info.get("uploader"),
+                        "duration_seconds": parse_duration_seconds(ytdlp_info.get("duration")),
+                        "thumbnail": ytdlp_info.get("thumbnail"),
+                        "description": ytdlp_info.get("description") or "",
+                    },
+                )
+                duration_seconds = int(info.get("duration_seconds") or 0)
+                if duration_seconds and duration_seconds > MAX_VIDEO_SECONDS:
+                    raise HTTPException(status_code=400, detail="MVP 版本目前只支持 1 小时以内的视频")
+
+                subtitle_tracks = ytdlp_info.get("subtitles") or {}
+                automatic_tracks = ytdlp_info.get("automatic_captions") or {}
+                english_track = choose_caption_track(subtitle_tracks, ("en",)) or choose_caption_track(
+                    automatic_tracks,
+                    ("en",),
+                )
+                if not english_track:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="这个视频没有可读取的英文字幕。请换一个开启英文字幕的视频。",
+                    ) from error
+                english_lines = fetch_caption_entries(english_track)
+                chinese_lines = []
+            except HTTPException:
+                raise
+            except Exception as caption_error:
+                print(f"[yt-dlp caption fallback failed] {type(caption_error).__name__}: {caption_error}", flush=True)
+                raise HTTPException(
+                    status_code=502,
+                    detail="暂时无法读取这个视频的字幕。请换一个开启英文字幕的视频，或稍后再试。",
+                ) from caption_error
 
     english_lines = [
         line for line in english_lines
@@ -804,14 +1020,15 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
         for index, line in enumerate(english_lines)
     ]
 
+    duration_seconds = int(info.get("duration_seconds") or 0)
     summary = clean_caption_text(info.get("description") or "")[:700]
     return ImportedVideo(
         youtube_url=normalized_youtube_url(video_id),
         youtube_video_id=video_id,
-        title=str(info.get("title") or "Untitled YouTube video"),
-        channel=str(info.get("channel") or info.get("uploader") or "YouTube"),
+        title=str(info.get("title") or "YouTube Video"),
+        channel=str(info.get("channel") or "Unknown"),
         duration=format_seconds(duration_seconds) if duration_seconds else format_seconds(subtitles[-1].end_seconds),
-        thumbnail_url=str(info.get("thumbnail") or ""),
+        thumbnail_url=str(info.get("thumbnail") or f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"),
         summary=summary or "Imported from YouTube captions.",
         subtitles=subtitles,
     )
@@ -1260,6 +1477,7 @@ def get_config() -> dict[str, Any]:
     return {
         "mock_youtube_url": MOCK_URL,
         "builder_enabled": has_ai_builder_token(),
+        "supadata_enabled": bool(get_supadata_key()),
         "builder_features": [
             "chat",
             "translation",
