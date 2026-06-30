@@ -61,4 +61,4 @@ SUPADATA_API_KEY=your_supadata_api_key
 
 ## 备注
 
-当前 MVP 支持 1 小时以内、可读取英文字幕的 YouTube 视频。配置 `SUPADATA_API_KEY` 后会优先通过 Supadata 读取 YouTube 信息和字幕；未配置时会回退到内置字幕读取方案。少数无字幕、字幕被关闭或被 YouTube 限制访问的视频仍可能导入失败。
+当前 MVP 支持 1 小时以内、可读取英文字幕的 YouTube 视频。默认优先使用免费字幕读取方案；配置 `SUPADATA_API_KEY` 后，仅在免费字幕读取失败时通过 Supadata 作为备用通道读取字幕。少数无字幕、字幕被关闭或被 YouTube 限制访问的视频仍可能导入失败。

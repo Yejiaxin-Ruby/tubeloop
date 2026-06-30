@@ -664,7 +664,6 @@ def merge_video_info(base: dict[str, Any], fallback: dict[str, Any]) -> dict[str
 
 def fetch_video_info_with_fallback(video_id: str) -> dict[str, Any]:
     info: dict[str, Any] = {}
-    info = merge_video_info(info, fetch_supadata_video_info(video_id))
     info = merge_video_info(info, fetch_oembed_video_info(video_id))
     info = merge_video_info(info, default_video_info(video_id))
     return info
@@ -928,17 +927,23 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
     chinese_lines: list[dict[str, Any]] = []
 
     try:
-        english_lines = fetch_supadata_english_lines(video_id)
+        english_lines, chinese_lines = fetch_transcript_caption_lines(video_id)
         if english_lines:
-            print(f"[supadata transcript] loaded {len(english_lines)} lines for {video_id}", flush=True)
+            print(f"[youtube transcript] loaded {len(english_lines)} lines for {video_id}", flush=True)
     except Exception as error:
-        print(f"[supadata transcript fallback] {type(error).__name__}: {error}", flush=True)
+        print(f"[youtube transcript failed] {type(error).__name__}: {error}", flush=True)
 
     if not english_lines:
         try:
-            english_lines, chinese_lines = fetch_transcript_caption_lines(video_id)
+            english_lines = fetch_supadata_english_lines(video_id)
+            if english_lines:
+                print(f"[supadata transcript fallback] loaded {len(english_lines)} lines for {video_id}", flush=True)
+                info = merge_video_info(info, fetch_supadata_video_info(video_id))
         except Exception as error:
-            print(f"[transcript fallback] {type(error).__name__}: {error}", flush=True)
+            print(f"[supadata transcript failed] {type(error).__name__}: {error}", flush=True)
+
+    if not english_lines:
+        try:
             try:
                 from yt_dlp import YoutubeDL
             except ImportError as import_error:
@@ -979,7 +984,7 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
                     raise HTTPException(
                         status_code=400,
                         detail="这个视频没有可读取的英文字幕。请换一个开启英文字幕的视频。",
-                    ) from error
+                    )
                 english_lines = fetch_caption_entries(english_track)
                 chinese_lines = []
             except HTTPException:
@@ -990,6 +995,8 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
                     status_code=502,
                     detail="暂时无法读取这个视频的字幕。请换一个开启英文字幕的视频，或稍后再试。",
                 ) from caption_error
+        except HTTPException:
+            raise
 
     english_lines = [
         line for line in english_lines
