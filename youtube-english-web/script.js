@@ -219,6 +219,10 @@ function renderSubtitles() {
     timestamp.className = "timestamp";
     timestamp.textContent = line.time;
 
+    const rail = document.createElement("div");
+    rail.className = "subtitle-rail";
+    rail.innerHTML = `<span class="subtitle-node" aria-hidden="true"></span>`;
+
     const textWrap = document.createElement("div");
     textWrap.className = "subtitle-text";
 
@@ -236,7 +240,7 @@ function renderSubtitles() {
       textWrap.append(zh);
     }
 
-    row.append(timestamp, textWrap);
+    row.append(timestamp, rail, textWrap);
     row.addEventListener("click", () => {
       const selectedText = window.getSelection()?.toString().trim();
       if (selectedText) return;
