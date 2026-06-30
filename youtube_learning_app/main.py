@@ -29,6 +29,9 @@ AI_BUILDER_BASE_URL = "https://space.ai-builders.com/backend/v1"
 AI_BUILDER_CHAT_MODEL = "gpt-5"
 AI_BUILDER_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
 MAX_VIDEO_SECONDS = 60 * 60
+CAPTION_BREAK_PATTERN = re.compile(r"[,.!?;:，。！？；：]$")
+MAX_MERGED_CAPTION_CHARS = 140
+MAX_MERGED_CAPTION_SECONDS = 14
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -308,6 +311,54 @@ def is_caption_noise(text: str) -> bool:
     }
 
 
+def join_caption_texts(parts: list[str]) -> str:
+    text = clean_caption_text(" ".join(clean_caption_text(part) for part in parts if clean_caption_text(part)))
+    text = re.sub(r"\s+([,.!?;:，。！？；：])", r"\1", text)
+    text = re.sub(r"([\u4e00-\u9fff])\s+([\u4e00-\u9fff])", r"\1\2", text)
+    return text
+
+
+def should_break_caption_group(text: str) -> bool:
+    return bool(CAPTION_BREAK_PATTERN.search(clean_caption_text(text)))
+
+
+def merge_caption_fragments(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        nonlocal pending
+        if not pending:
+            return
+        text = join_caption_texts([str(line.get("text", "")) for line in pending])
+        if text and not is_caption_noise(text):
+            merged.append(
+                {
+                    "start_seconds": float(pending[0]["start_seconds"]),
+                    "end_seconds": float(pending[-1]["end_seconds"]),
+                    "text": text,
+                },
+            )
+        pending = []
+
+    for line in sorted(lines, key=lambda item: float(item.get("start_seconds", 0))):
+        text = clean_caption_text(str(line.get("text", "")))
+        if not text or is_caption_noise(text):
+            continue
+        pending.append({**line, "text": text})
+        combined = join_caption_texts([str(item.get("text", "")) for item in pending])
+        duration = float(pending[-1]["end_seconds"]) - float(pending[0]["start_seconds"])
+        if (
+            should_break_caption_group(text)
+            or len(combined) >= MAX_MERGED_CAPTION_CHARS
+            or duration >= MAX_MERGED_CAPTION_SECONDS
+        ):
+            flush()
+
+    flush()
+    return merged
+
+
 def parse_vtt_timestamp(value: str) -> float:
     parts = value.strip().replace(",", ".").split(":")
     try:
@@ -441,6 +492,25 @@ def match_translation_line(
             best_score = score
             best_text = str(translated["text"])
     return best_text if best_score > -6 else ""
+
+
+def match_translation_range(
+    line: dict[str, Any],
+    translated_lines: list[dict[str, Any]],
+) -> str:
+    start = float(line["start_seconds"])
+    end = float(line["end_seconds"])
+    matched: list[dict[str, Any]] = []
+    for translated in translated_lines:
+        other_start = float(translated["start_seconds"])
+        other_end = float(translated["end_seconds"])
+        midpoint = (other_start + other_end) / 2
+        overlap = max(0.0, min(end, other_end) - max(start, other_start))
+        if overlap > 0.05 or start <= midpoint <= end:
+            matched.append(translated)
+    if matched:
+        return join_caption_texts([str(item.get("text", "")) for item in matched])
+    return match_translation_line(line, translated_lines)
 
 
 def transcript_snippet_value(snippet: Any, key: str, default: Any = None) -> Any:
@@ -714,8 +784,11 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
     if not english_lines:
         raise HTTPException(status_code=400, detail="英文字幕为空。请换一个字幕内容更完整的视频。")
 
+    english_lines = merge_caption_fragments(english_lines)
+    chinese_lines = merge_caption_fragments(chinese_lines)
+
     if chinese_lines:
-        translations = [match_translation_line(line, chinese_lines) for line in english_lines]
+        translations = [match_translation_range(line, chinese_lines) for line in english_lines]
     else:
         # Keep video import fast and reliable. Chinese generation can be added as a
         # follow-up enhancement, but it should not block playback and English captions.
