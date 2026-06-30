@@ -74,8 +74,8 @@ input {
   top: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(260px, 620px) auto;
-  gap: 24px;
+  grid-template-columns: minmax(180px, auto) minmax(320px, 1fr) max-content;
+  gap: 18px;
   align-items: center;
   min-height: 58px;
   padding: 10px 28px;
@@ -134,7 +134,7 @@ input {
   order: 2;
   align-items: center;
   gap: 10px;
-  max-width: 620px;
+  max-width: 720px;
   padding: 7px 8px 7px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -189,11 +189,13 @@ input {
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+  white-space: nowrap;
 }
 
 .global-tab,
 .back-home-button,
 .outline-button,
+.primary-button,
 .selection-action,
 .console-tab,
 .chip,
@@ -207,6 +209,7 @@ input {
   background: transparent;
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .global-tab {
@@ -295,7 +298,7 @@ input {
 
 .learning-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) 480px;
   height: calc(100vh - 71px);
   min-height: 0;
   overflow: hidden;
@@ -306,13 +309,18 @@ input {
 .right-console {
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
   background: var(--ink);
 }
 
 .watch-column {
   display: grid;
   grid-template-rows: auto auto;
+  align-content: start;
+  overflow: auto;
+}
+
+.right-console {
+  overflow: hidden;
 }
 
 .video-card {
@@ -361,6 +369,41 @@ input {
   color: var(--text-faint);
   background: var(--ink-2);
   font-size: 13px;
+}
+
+.video-meta-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 2px 0;
+}
+
+.video-meta-panel h2,
+.video-meta-panel p {
+  margin: 0;
+}
+
+.video-meta-panel h2 {
+  color: var(--text);
+  font-family: Fraunces, serif;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.28;
+}
+
+.video-meta-panel p {
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.video-meta-panel span {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  color: var(--text-faint);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
 }
 
 .drill-panel {
@@ -584,10 +627,10 @@ input {
 .subtitle-line {
   position: relative;
   display: grid;
-  grid-template-columns: 64px 18px minmax(0, 1fr);
+  grid-template-columns: 54px 16px minmax(0, 1fr);
   gap: 0;
   align-items: start;
-  padding: 11px 20px 11px 18px;
+  padding: 11px 18px 11px 14px;
   border-left: 2px solid transparent;
   color: var(--text);
   cursor: pointer;
@@ -626,7 +669,7 @@ input {
   position: absolute;
   top: 0;
   bottom: -11px;
-  left: 8px;
+  left: 7px;
   width: 1px;
   content: "";
   background: var(--line-soft);
@@ -639,7 +682,7 @@ input {
 .subtitle-node {
   position: relative;
   top: 6px;
-  left: 5px;
+  left: 4px;
   display: block;
   width: 7px;
   height: 7px;
@@ -1099,14 +1142,57 @@ input {
 @media (max-width: 1120px) {
   .learning-stage {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: auto;
+    overflow: visible;
   }
 
   .right-console {
+    max-height: none;
+    overflow: visible;
     border-top: 1px solid var(--line);
+  }
+
+  .console-panel,
+  #subtitlesPanel {
+    overflow: visible;
+  }
+
+  .subtitle-list {
+    max-height: 640px;
   }
 
   .card-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .import-strip {
+    position: static;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px 18px;
+  }
+
+  .brand p {
+    max-width: none;
+    white-space: normal;
+  }
+
+  .import-bar,
+  .global-nav {
+    width: 100%;
+    max-width: none;
+  }
+
+  .global-nav {
+    order: 3;
+    justify-content: flex-start;
+  }
+
+  .global-tab {
+    flex: 0 0 auto;
   }
 }
 
@@ -1169,7 +1255,7 @@ input {
   }
 
   .subtitle-line {
-    grid-template-columns: 52px 18px minmax(0, 1fr);
+    grid-template-columns: 48px 16px minmax(0, 1fr);
     padding-right: 14px;
     padding-left: 12px;
   }

@@ -12,7 +12,7 @@
     />
     <script>
       document.write(
-        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=design-spec-2" />`,
+        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=design-spec-4" />`,
       );
     </script>
   </head>
@@ -74,23 +74,12 @@
             <div class="video-thumbnail">
               <div class="youtube-player" id="youtubePlayer" aria-label="YouTube 播放器"></div>
               <div class="video-grain player-placeholder" aria-hidden="true"></div>
-              <div class="video-title player-placeholder">
-                <span class="channel-avatar" aria-hidden="true"></span>
-                <div>
-                  <h2 id="videoTitle">粘贴 YouTube 链接开始</h2>
-                  <p id="videoChannel">支持 1 小时以内且带英文字幕的视频</p>
-                </div>
-              </div>
               <button class="youtube-play player-placeholder" type="button" id="playButton" aria-label="播放或暂停">
                 <span id="playIcon">▶</span>
               </button>
               <div class="youtube-link player-placeholder">
                 <span>前往平台观看：</span>
                 <strong>YouTube</strong>
-              </div>
-              <div class="video-badges player-placeholder" aria-hidden="true">
-                <span>4K</span>
-                <span id="videoDuration">00:00</span>
               </div>
               <div class="current-caption player-placeholder" id="currentCaption">
                 导入视频后，这里会显示当前句字幕。
@@ -99,6 +88,13 @@
                 <span id="playbackProgress"></span>
               </div>
               <div class="playback-time player-placeholder" id="playbackTime">00:00 / 00:00</div>
+            </div>
+            <div class="video-meta-panel">
+              <div>
+                <h2 id="videoTitle">粘贴 YouTube 链接开始</h2>
+                <p id="videoChannel">支持 1 小时以内且带英文字幕的视频</p>
+              </div>
+              <span id="videoDuration">00:00</span>
             </div>
           </section>
 
@@ -209,7 +205,7 @@
 
     <script>
       document.write(
-        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=design-spec-2"><\/script>`,
+        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=design-spec-4"><\/script>`,
       );
     </script>
   </body>
