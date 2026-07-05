@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tubeloop 产品迭代复盘</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #14181b;
+        --ink-2: #1c2125;
+        --ink-3: #242a2f;
+        --line: #2c3239;
+        --line-soft: #232830;
+        --text: #e9e6dc;
+        --text-dim: #9ca1a5;
+        --text-faint: #6b7074;
+        --amber: #e2a33b;
+        --amber-soft: rgba(226, 163, 59, 0.14);
+        --teal: #4fa89b;
+        --teal-soft: rgba(79, 168, 155, 0.15);
+        --danger: #e46262;
+        --radius: 10px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 72% 6%, rgba(79, 168, 155, 0.13), transparent 30%),
+          linear-gradient(180deg, #101315 0%, var(--ink) 38%, #101315 100%);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Microsoft YaHei", sans-serif;
+        line-height: 1.65;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .page {
+        width: min(1180px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 58px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(20, 24, 27, 0.86);
+        backdrop-filter: blur(18px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
+        color: var(--ink);
+        background: linear-gradient(180deg, var(--amber), #6b5230);
+        font-size: 12px;
+      }
+
+      .nav {
+        display: flex;
+        gap: 18px;
+        color: var(--text-dim);
+        font-size: 13px;
+      }
+
+      .nav a {
+        text-decoration: none;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.02fr) minmax(360px, 0.98fr);
+        gap: 34px;
+        align-items: center;
+        min-height: 620px;
+        padding: 68px 0 42px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 18px;
+        padding: 7px 10px;
+        border: 1px solid rgba(226, 163, 59, 0.38);
+        border-radius: 999px;
+        color: var(--amber);
+        background: var(--amber-soft);
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 760px;
+        font-size: clamp(42px, 7vw, 86px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .hero-copy {
+        max-width: 660px;
+        margin-top: 22px;
+        color: var(--text-dim);
+        font-size: 18px;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 30px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--text);
+        background: rgba(28, 33, 37, 0.75);
+        font-size: 14px;
+        font-weight: 650;
+      }
+
+      .pill.accent {
+        border-color: rgba(79, 168, 155, 0.5);
+        color: var(--teal);
+        background: var(--teal-soft);
+      }
+
+      .hero-visual {
+        position: relative;
+        min-height: 460px;
+      }
+
+      .screen-stack {
+        position: relative;
+        height: 460px;
+      }
+
+      .screenshot {
+        position: absolute;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--ink-2);
+        box-shadow: 0 26px 70px rgba(0, 0, 0, 0.42);
+      }
+
+      .screenshot img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .shot-main {
+        inset: 18px 0 auto auto;
+        width: 88%;
+        height: 272px;
+      }
+
+      .shot-side {
+        left: 0;
+        bottom: 22px;
+        width: 58%;
+        height: 196px;
+      }
+
+      .shot-chip {
+        right: 22px;
+        bottom: 0;
+        width: 46%;
+        height: 168px;
+      }
+
+      .caption-card {
+        position: absolute;
+        left: 22px;
+        top: 0;
+        width: 238px;
+        padding: 16px;
+        border: 1px solid rgba(226, 163, 59, 0.42);
+        border-radius: var(--radius);
+        background: rgba(20, 24, 27, 0.92);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
+      }
+
+      .caption-card strong {
+        display: block;
+        color: var(--amber);
+        font-size: 13px;
+      }
+
+      .caption-card span {
+        display: block;
+        margin-top: 6px;
+        color: var(--text);
+        font-size: 19px;
+        font-weight: 750;
+        line-height: 1.35;
+      }
+
+      section {
+        padding: 58px 0;
+        border-top: 1px solid var(--line-soft);
+      }
+
+      .section-head {
+        display: flex;
+        gap: 24px;
+        align-items: end;
+        justify-content: space-between;
+        margin-bottom: 26px;
+      }
+
+      .section-head h2 {
+        font-size: clamp(28px, 4vw, 44px);
+        line-height: 1.12;
+      }
+
+      .section-head p {
+        max-width: 520px;
+        color: var(--text-dim);
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .grid.cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .grid.cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(28, 33, 37, 0.76);
+      }
+
+      .card-pad {
+        padding: 20px;
+      }
+
+      .card h3 {
+        margin-bottom: 10px;
+        font-size: 19px;
+      }
+
+      .card p {
+        color: var(--text-dim);
+      }
+
+      .tag {
+        display: inline-flex;
+        margin-bottom: 14px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        color: var(--teal);
+        background: var(--teal-soft);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .timeline {
+        position: relative;
+        display: grid;
+        gap: 14px;
+      }
+
+      .timeline::before {
+        position: absolute;
+        top: 18px;
+        bottom: 18px;
+        left: 19px;
+        width: 1px;
+        background: var(--line);
+        content: "";
+      }
+
+      .timeline-item {
+        position: relative;
+        display: grid;
+        grid-template-columns: 40px minmax(0, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+
+      .dot {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(226, 163, 59, 0.5);
+        border-radius: 50%;
+        color: var(--amber);
+        background: var(--ink);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .timeline-copy {
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(28, 33, 37, 0.72);
+      }
+
+      .timeline-copy h3 {
+        font-size: 18px;
+      }
+
+      .timeline-copy p {
+        margin-top: 6px;
+        color: var(--text-dim);
+      }
+
+      .image-panel {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--ink-2);
+      }
+
+      .image-panel img {
+        display: block;
+        width: 100%;
+      }
+
+      .image-panel figcaption {
+        padding: 12px 14px;
+        border-top: 1px solid var(--line);
+        color: var(--text-dim);
+        font-size: 13px;
+      }
+
+      .problem-card {
+        position: relative;
+        overflow: hidden;
+      }
+
+      .problem-card::before {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 4px;
+        background: var(--amber);
+        content: "";
+      }
+
+      .problem-card h3 {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .problem-card h3 span {
+        color: var(--amber);
+      }
+
+      .solution {
+        margin-top: 14px;
+        padding: 12px;
+        border: 1px solid rgba(79, 168, 155, 0.32);
+        border-radius: 8px;
+        color: var(--text);
+        background: var(--teal-soft);
+        font-size: 14px;
+      }
+
+      .metric-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .metric {
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(28, 33, 37, 0.76);
+      }
+
+      .metric strong {
+        display: block;
+        color: var(--amber);
+        font-size: 30px;
+        line-height: 1;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 8px;
+        color: var(--text-dim);
+        font-size: 13px;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .flow-step {
+        min-height: 136px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--ink-2);
+      }
+
+      .flow-step strong {
+        color: var(--teal);
+        font-size: 13px;
+      }
+
+      .flow-step h3 {
+        margin: 8px 0 6px;
+        font-size: 17px;
+      }
+
+      .flow-step p {
+        color: var(--text-dim);
+        font-size: 14px;
+      }
+
+      .quote {
+        padding: 28px;
+        border: 1px solid rgba(226, 163, 59, 0.38);
+        border-radius: var(--radius);
+        background: linear-gradient(135deg, rgba(226, 163, 59, 0.14), rgba(79, 168, 155, 0.1));
+      }
+
+      .quote p {
+        max-width: 920px;
+        color: var(--text);
+        font-size: clamp(22px, 3vw, 34px);
+        font-weight: 760;
+        line-height: 1.35;
+      }
+
+      .quote span {
+        display: block;
+        margin-top: 14px;
+        color: var(--text-dim);
+      }
+
+      footer {
+        padding: 34px 0 54px;
+        border-top: 1px solid var(--line-soft);
+        color: var(--text-faint);
+        font-size: 13px;
+      }
+
+      @media (max-width: 980px) {
+        .hero,
+        .grid.cols-2,
+        .grid.cols-3 {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          min-height: auto;
+        }
+
+        .metric-row,
+        .flow {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .nav {
+          display: none;
+        }
+      }
+
+      @media (max-width: 620px) {
+        .page {
+          width: min(100% - 24px, 1180px);
+        }
+
+        .metric-row,
+        .flow {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-visual,
+        .screen-stack {
+          min-height: 420px;
+          height: 420px;
+        }
+
+        .shot-main {
+          width: 100%;
+        }
+
+        .shot-side {
+          width: 72%;
+        }
+
+        .shot-chip {
+          width: 58%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="page brand">
+        <span class="brand-mark">TL</span>
+        <span>Tubeloop 产品迭代复盘</span>
+        <nav class="nav" aria-label="页面导航">
+          <a href="#story">产品方向</a>
+          <a href="#timeline">迭代过程</a>
+          <a href="#problems">关键难题</a>
+          <a href="#mvp">MVP 方法</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page">
+      <section class="hero" id="top">
+        <div>
+          <span class="eyebrow">从一个学习痛点，到一个可测试的 Web MVP</span>
+          <h1>把 YouTube 视频变成个人英语学习语料库</h1>
+          <p class="hero-copy">
+            Tubeloop 的开发过程不是一开始就有完整答案，而是不断围绕真实使用场景做取舍：
+            哪些功能真的解决学习问题，哪些只是看起来很酷，哪些技术方案足够轻、足够快、足够适合小规模使用。
+          </p>
+          <div class="hero-actions">
+            <span class="pill accent">真实视频材料</span>
+            <span class="pill">字幕学习</span>
+            <span class="pill">AI 输出练习</span>
+            <span class="pill">表达沉淀</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="Tubeloop 产品截图组合">
+          <div class="screen-stack">
+            <figure class="screenshot shot-main">
+              <img src="assets/product-ai-coach.png" alt="Tubeloop AI 教练界面截图" />
+            </figure>
+            <figure class="screenshot shot-side">
+              <img src="assets/product-subtitles.png" alt="Tubeloop 字幕学习界面截图" />
+            </figure>
+            <figure class="screenshot shot-chip">
+              <img src="assets/product-vocab.png" alt="Tubeloop 词汇辅助界面截图" />
+            </figure>
+            <div class="caption-card">
+              <strong>核心闭环</strong>
+              <span>导入视频 → 理解字幕 → 输出讨论 → 保存表达</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="story">
+        <div class="section-head">
+          <h2>产品方向是怎样变清楚的</h2>
+          <p>
+            这个项目最重要的变化，是从“做一个功能”转向“完成一次学习闭环”。
+          </p>
+        </div>
+
+        <div class="grid cols-3">
+          <article class="card card-pad">
+            <span class="tag">起点</span>
+            <h3>不是再做一个字幕工具</h3>
+            <p>
+              最初的痛点来自看英文文章和视频时的理解障碍，但划词翻译已经有成熟工具。
+              于是方向被重新收窄：真正缺的是围绕好视频进行深度吸收的学习空间。
+            </p>
+          </article>
+          <article class="card card-pad">
+            <span class="tag">转向</span>
+            <h3>输入和输出要在一起</h3>
+            <p>
+              只看懂字幕不等于学会。Tubeloop 把精听、泛听、AI 讨论和表达保存放在同一个视频上下文里，
+              让学习从“看过”变成“说得出、用得上”。
+            </p>
+          </article>
+          <article class="card card-pad">
+            <span class="tag">定位</span>
+            <h3>个人英语学习语料库</h3>
+            <p>
+              最终定位不是课程平台，也不是单词软件，而是一个可以不断导入真实 YouTube 视频、
+              沉淀表达和话题的个人学习系统。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="timeline">
+        <div class="section-head">
+          <h2>一周内的主要迭代路线</h2>
+          <p>
+            我们没有一次性规划一个庞大系统，而是从“最小学习闭环”出发，一边试用一边修正。
+          </p>
+        </div>
+
+        <div class="timeline">
+          <div class="timeline-item">
+            <div class="dot">01</div>
+            <div class="timeline-copy">
+              <h3>明确 MVP：导入视频后马上开始学习</h3>
+              <p>
+                MVP 被定义为：粘贴 YouTube 链接，获得字幕，完成泛听、精听、AI 讨论和表达保存。
+                这让功能选择有了边界。
+              </p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot">02</div>
+            <div class="timeline-copy">
+              <h3>从静态原型推进到可测试 Web 版</h3>
+              <p>
+                前端先做出学习界面，再引入 FastAPI 后端、本地数据库和 AI Builder，让导入、翻译、对话和表达库逐渐从 mock 走向真实可用。
+              </p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot">03</div>
+            <div class="timeline-copy">
+              <h3>反复打磨字幕体验</h3>
+              <p>
+                字幕是产品的学习主界面。我们调整了英文、中文、双语、隐藏、断句、时间轴、选中翻译和加入表达库等细节。
+              </p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot">04</div>
+            <div class="timeline-copy">
+              <h3>AI 教练从泛聊天变成材料输出练习</h3>
+              <p>
+                AI 教练不再只是“你想聊什么”，而是围绕视频提供三个入口：复述视频、讲相关经历、聊学到的表达。
+              </p>
+            </div>
+          </div>
+          <div class="timeline-item">
+            <div class="dot">05</div>
+            <div class="timeline-copy">
+              <h3>加入词汇辅助和表达沉淀</h3>
+              <p>
+                新增 3000、5000、8000、10000+ 词汇量筛选思路，并用本地词库和词形还原来判断字幕里的生词。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>当前产品长什么样</h2>
+          <p>
+            页面采用深色学习界面，核心信息集中在播放器、字幕时间轴、AI 教练和词汇辅助上。
+          </p>
+        </div>
+
+        <div class="grid cols-3">
+          <figure class="image-panel">
+            <img src="assets/product-subtitles.png" alt="字幕学习截图" />
+            <figcaption>字幕学习：围绕视频时间轴完成听读理解。</figcaption>
+          </figure>
+          <figure class="image-panel">
+            <img src="assets/product-ai-coach.png" alt="AI 教练截图" />
+            <figcaption>AI 教练：从视频内容出发进行输出练习。</figcaption>
+          </figure>
+          <figure class="image-panel">
+            <img src="assets/product-vocab.png" alt="词汇辅助截图" />
+            <figcaption>词汇辅助：按用户词汇量识别可能的生词。</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="problems">
+        <div class="section-head">
+          <h2>开发中遇到的关键难题</h2>
+          <p>
+            这类 AI 学习产品的难点，不只是调用模型，而是把真实内容、学习动作和反馈状态串起来。
+          </p>
+        </div>
+
+        <div class="grid cols-2">
+          <article class="card card-pad problem-card">
+            <h3><span>01</span> 真实 YouTube 链接导入失败</h3>
+            <p>
+              原型阶段容易让界面“看起来能用”，但真实链接涉及视频解析、字幕源、播放器加载和异常反馈。
+            </p>
+            <div class="solution">
+              解决思路：把导入流程拆成明确状态：加载中、成功、失败；后台保留日志，前端给用户明确反馈。
+            </div>
+          </article>
+
+          <article class="card card-pad problem-card">
+            <h3><span>02</span> 中文字幕生成慢</h3>
+            <p>
+              如果每条字幕都实时翻译，等待时间会很长，也容易触发超时。
+            </p>
+            <div class="solution">
+              解决思路：优先使用 YouTube 自带中文；没有中文时，用户点击中文或双语再按需分批生成，并缓存结果。
+            </div>
+          </article>
+
+          <article class="card card-pad problem-card">
+            <h3><span>03</span> 字幕太碎，不像一句话</h3>
+            <p>
+              YouTube 字幕常按时间戳切片，学习时会出现一句话被拆成很多小段的问题。
+            </p>
+            <div class="solution">
+              解决思路：在展示层做断句合并，以句号、逗号等标点为边界，让字幕更接近自然阅读单位。
+            </div>
+          </article>
+
+          <article class="card card-pad problem-card">
+            <h3><span>04</span> AI 功能容易变鸡肋</h3>
+            <p>
+              直接给用户一个聊天框，用户很可能不知道该说什么，也不知道如何围绕视频练习。
+            </p>
+            <div class="solution">
+              解决思路：把 AI 教练改成三个场景卡片：复述内容、相关经历、学到的表达，让输出任务更具体。
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="mvp">
+        <div class="section-head">
+          <h2>如何开发这类 AI 学习产品的 MVP</h2>
+          <p>
+            这次最大的经验是：不要先想象用户需要什么，而是回到一个真实学习者的具体场景里，
+            从真实痛点里长出最小功能。
+          </p>
+        </div>
+
+        <div class="flow">
+          <div class="flow-step">
+            <strong>Step 1</strong>
+            <h3>从自己的学习现场开始</h3>
+            <p>先观察真实学习过程里卡住的地方，而不是先列功能清单。</p>
+          </div>
+          <div class="flow-step">
+            <strong>Step 2</strong>
+            <h3>找到最刺痛的问题</h3>
+            <p>比如看字幕麻烦、不能学自己感兴趣的视频、学完没有沉淀。</p>
+          </div>
+          <div class="flow-step">
+            <strong>Step 3</strong>
+            <h3>只做关键学习动作</h3>
+            <p>先保留导入视频、字幕理解、AI 讨论和表达保存，不急着做完整平台。</p>
+          </div>
+          <div class="flow-step">
+            <strong>Step 4</strong>
+            <h3>让真实学习者去用</h3>
+            <p>自己或朋友拿真实视频学习，才能发现哪些地方真的别扭。</p>
+          </div>
+          <div class="flow-step">
+            <strong>Step 5</strong>
+            <h3>多轮迭代找手感</h3>
+            <p>根据真实使用反馈反复调整字幕、AI 教练、表达库和页面细节。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="quote">
+          <p>
+            Tubeloop 的核心不是“帮用户看懂视频”，而是让一个好视频变成一轮完整的英语学习。
+          </p>
+          <span>
+            下一个阶段，重点会从“继续加功能”转向“让真实用户每天可以稳定使用”。
+          </span>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>下一步计划</h2>
+          <p>
+            接下来会围绕稳定性和学习体验继续打磨。
+          </p>
+        </div>
+
+        <div class="grid cols-3">
+          <article class="card card-pad">
+            <span class="tag">稳定</span>
+            <h3>让真实链接更可靠</h3>
+            <p>继续优化 YouTube 导入、字幕获取、失败提示和后台日志。</p>
+          </article>
+          <article class="card card-pad">
+            <span class="tag">体验</span>
+            <h3>让字幕更适合学习</h3>
+            <p>继续优化中英文切换、字幕断句、翻译速度和选中操作。</p>
+          </article>
+          <article class="card card-pad">
+            <span class="tag">输出</span>
+            <h3>让 AI 教练更像教练</h3>
+            <p>完善语音输入、表达纠正、追问逻辑和视频上下文理解。</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="page">
+        Tubeloop Iteration Review · 基于一周产品迭代整理 · 2026
+      </div>
+    </footer>
+  </body>
+</html>
