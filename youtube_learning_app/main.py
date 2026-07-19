@@ -131,6 +131,19 @@ class TranslateSubtitlesRequest(BaseModel):
     window_size: int = 40
 
 
+class VocabularySubtitleLine(BaseModel):
+    time: str = ""
+    start_time: str = ""
+    start_seconds: float = 0
+    en: str = ""
+
+
+class VocabularyAnalyzeRequest(BaseModel):
+    subtitles: list[VocabularySubtitleLine] = Field(default_factory=list)
+    threshold: int = 5000
+    limit: int = 80
+
+
 class ExpressionExplainRequest(BaseModel):
     expression_text: str = Field(..., min_length=1)
     context: str = ""
@@ -1511,10 +1524,6 @@ def analyze_video_vocabulary(
     limit: int = 80,
 ) -> dict[str, Any]:
     get_video_or_404(db, video_id)
-    vocab_levels = load_vocab_levels()
-    if not vocab_levels:
-        raise HTTPException(status_code=500, detail="Vocabulary data is missing.")
-
     rows = db.execute(
         """
         SELECT start_time, english_text
@@ -1524,9 +1533,28 @@ def analyze_video_vocabulary(
         """,
         (video_id,),
     ).fetchall()
+    return analyze_vocabulary_rows(db, rows, threshold, limit, video_id=video_id)
+
+
+def analyze_vocabulary_rows(
+    db: sqlite3.Connection,
+    rows: list[Any],
+    threshold: int,
+    limit: int = 80,
+    video_id: int | None = None,
+) -> dict[str, Any]:
+    vocab_levels = load_vocab_levels()
+    if not vocab_levels:
+        raise HTTPException(status_code=500, detail="Vocabulary data is missing.")
+
     items: dict[str, dict[str, Any]] = {}
     for row in rows:
-        text = row["english_text"] or ""
+        if isinstance(row, dict):
+            text = row.get("english_text", "") or ""
+            start_time = row.get("start_time", "") or ""
+        else:
+            text = row["english_text"] or ""
+            start_time = row["start_time"] or ""
         for token in WORD_PATTERN.findall(text):
             word = normalize_word(token)
             if len(word) < 2:
@@ -1549,7 +1577,7 @@ def analyze_video_vocabulary(
             if item["surface"].lower() == lemma and token != item["surface"]:
                 item["surface"] = token
             if len(item["examples"]) < 2:
-                item["examples"].append({"time": row["start_time"], "text": text})
+                item["examples"].append({"time": start_time, "text": text})
 
     sorted_items = sorted(
         items.values(),
@@ -1977,6 +2005,22 @@ def get_video_vocabulary(
         raise HTTPException(status_code=400, detail="threshold must be 3000, 5000, 8000, or 10000")
     with connect() as db:
         return analyze_video_vocabulary(db, video_id, threshold, limit)
+
+
+@app.post("/api/vocabulary/analyze")
+def analyze_vocabulary(request: VocabularyAnalyzeRequest) -> dict[str, Any]:
+    if request.threshold not in VOCAB_THRESHOLDS:
+        raise HTTPException(status_code=400, detail="threshold must be 3000, 5000, 8000, or 10000")
+    rows = [
+        {
+            "start_time": line.start_time or line.time,
+            "english_text": line.en,
+        }
+        for line in request.subtitles
+        if line.en.strip()
+    ]
+    with connect() as db:
+        return analyze_vocabulary_rows(db, rows, request.threshold, request.limit)
 
 
 @app.post("/api/videos/{video_id}/translate-subtitles")

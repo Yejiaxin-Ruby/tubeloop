@@ -348,9 +348,27 @@ async function renderVocabularyPanel() {
   vocabList.append(loading);
 
   try {
-    const result = await apiFetch(
-      `/videos/${currentVideoId}/vocabulary?threshold=${threshold}&limit=30`,
-    );
+    let result;
+    try {
+      result = await apiFetch(
+        `/videos/${currentVideoId}/vocabulary?threshold=${threshold}&limit=30`,
+      );
+    } catch (error) {
+      if (!subtitles.length) throw error;
+      result = await apiFetch("/vocabulary/analyze", {
+        method: "POST",
+        body: JSON.stringify({
+          threshold,
+          limit: 30,
+          subtitles: subtitles.map((line) => ({
+            time: line.time || "",
+            start_time: line.start_time || line.time || "",
+            start_seconds: Number(line.start_seconds || 0),
+            en: line.en || "",
+          })),
+        }),
+      });
+    }
     if (requestId !== vocabularyRequestId) return;
     const items = result.items || [];
     vocabResultCount.textContent = `${result.total ?? items.length} 个`;
