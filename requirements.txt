@@ -5,3 +5,4 @@ python-dotenv
 python-multipart
 yt-dlp
 youtube-transcript-api
+wordfreq

@@ -324,7 +324,7 @@ input {
 }
 
 .video-card {
-  padding: 20px 28px 0;
+  padding: 20px 28px 18px;
 }
 
 .video-thumbnail {
@@ -360,6 +360,37 @@ input {
   display: none !important;
 }
 
+.player-progress-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 2px 0;
+}
+
+.playback-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.playback-bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--amber);
+  transition: width 120ms linear;
+}
+
+.playback-time {
+  color: var(--text-faint);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .video-thumbnail:not(.has-player)::before {
   position: absolute;
   inset: 0;
@@ -376,7 +407,7 @@ input {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 2px 0;
+  padding: 12px 2px 0;
 }
 
 .video-meta-panel h2,
@@ -407,7 +438,7 @@ input {
 }
 
 .drill-panel {
-  padding: 14px 28px 18px;
+  padding: 0 28px 18px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -438,6 +469,7 @@ input {
 .speed-control {
   display: grid;
   gap: 6px;
+  padding: 14px 2px 0;
 }
 
 .speed-heading {
@@ -472,11 +504,9 @@ input {
 .quick-options {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 14px;
   margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line-soft);
 }
 
 .quick-options p {
@@ -510,7 +540,7 @@ input {
 
 .console-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   border-bottom: 1px solid var(--line);
   background: var(--ink);
 }
@@ -573,7 +603,50 @@ input {
 .subtitle-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+}
+
+.language-switch {
+  display: inline-flex;
+  width: 73px;
+  height: 55px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.language-switch:hover {
+  opacity: 0.86;
+}
+
+.translation-glyph {
+  display: block;
+  width: 68px;
+  height: 55px;
+  pointer-events: none;
+}
+
+.translation-arrow-fill {
+  fill: #ffffff;
+}
+
+.translation-glyph-text {
+  dominant-baseline: middle;
+  fill: var(--text-faint);
+  font-family: "PingFang SC", "Hiragino Sans GB", STHeiti, "Microsoft YaHei", sans-serif;
+  font-size: 21.5px;
+  font-weight: 900;
+}
+
+.language-switch[data-mode="both"] .translation-glyph-text,
+.language-switch[data-mode="zh"] .translation-glyph-zh,
+.language-switch[data-mode="en"] .translation-glyph-en {
+  color: #32e879;
+  fill: #32e879;
 }
 
 .chip {
@@ -701,6 +774,10 @@ input {
   user-select: text;
 }
 
+.subtitle-text.is-hidden-caption {
+  min-height: 18px;
+}
+
 .en-text,
 .zh-text {
   margin: 0;
@@ -785,7 +862,121 @@ input {
 }
 
 #coachPanel {
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+#vocabularyPanel {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.vocab-filter-wrap {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--ink);
+}
+
+.vocab-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.vocab-filter {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: var(--ink-2);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vocab-filter:hover {
+  border-color: var(--teal-dim);
+  color: var(--text);
+}
+
+.vocab-filter.is-active {
+  border-color: var(--teal);
+  color: var(--ink);
+  background: var(--teal);
+}
+
+.vocab-hint {
+  margin: 10px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vocab-result-head {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.vocab-result-head em {
+  flex: 0 0 auto;
+  color: var(--teal);
+  font-style: normal;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.vocab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 16px 20px 22px;
+  overflow: auto;
+}
+
+.vocab-card {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ink-2);
+}
+
+.vocab-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.vocab-card p {
+  margin: 7px 0 0;
+  color: var(--teal);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vocab-empty {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  padding: 24px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--text-dim);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .coach-prompt {
@@ -794,7 +985,7 @@ input {
 }
 
 .coach-prompt-copy {
-  padding: 18px 20px;
+  padding: 18px 20px 12px;
 }
 
 .coach-prompt-copy h2,
@@ -813,6 +1004,103 @@ input {
   color: var(--text-dim);
   font-size: 12.5px;
   line-height: 1.6;
+}
+
+.coach-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 0 20px 18px;
+}
+
+.coach-mode-card {
+  display: grid;
+  min-height: 48px;
+  align-content: center;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: var(--ink-2);
+  text-align: left;
+}
+
+.coach-mode-card:hover {
+  border-color: var(--teal-dim);
+  color: var(--text);
+}
+
+.coach-mode-card.is-active {
+  border-color: var(--teal);
+  background: rgba(79, 168, 155, 0.12);
+}
+
+.coach-mode-card strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.coach-correction-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  margin: 0 20px 4px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(28, 33, 37, 0.64);
+}
+
+.coach-correction-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.coach-correction-copy strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.coach-correction-copy span {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coach-correction-toggle {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 0 0 auto;
+  width: 104px;
+  min-height: 32px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--ink);
+}
+
+.correction-option {
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-dim);
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.correction-option.is-active {
+  color: var(--ink);
+  background: var(--teal);
 }
 
 .chat-log {
@@ -958,6 +1246,24 @@ input {
   color: var(--teal);
   font-size: 12.5px;
   line-height: 1.45;
+}
+
+.library-toggle-button {
+  min-height: 34px;
+  margin-left: auto;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.library-toggle-button:hover,
+.library-toggle-button.is-active {
+  border-color: var(--teal-dim);
+  color: var(--teal);
 }
 
 .card-meta {
@@ -1154,7 +1460,8 @@ input {
   }
 
   .console-panel,
-  #subtitlesPanel {
+  #subtitlesPanel,
+  #vocabularyPanel {
     overflow: visible;
   }
 
@@ -1248,6 +1555,14 @@ input {
 
   #subtitlesPanel {
     grid-template-rows: auto auto minmax(420px, 1fr);
+  }
+
+  #vocabularyPanel {
+    grid-template-rows: auto auto minmax(420px, 1fr);
+  }
+
+  .vocab-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .subtitle-list {

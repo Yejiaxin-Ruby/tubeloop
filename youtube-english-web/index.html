@@ -12,7 +12,7 @@
     />
     <script>
       document.write(
-        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=design-spec-6" />`,
+        `<link rel="stylesheet" href="${location.protocol === "file:" ? "./styles.css" : "/web/styles.css"}?v=coach-toggle-2" />`,
       );
     </script>
   </head>
@@ -63,6 +63,7 @@
               <h2>表达库</h2>
               <p id="cardCount">已保存 3 条</p>
             </div>
+            <button class="library-toggle-button" type="button" id="toggleLibraryChinese">隐藏中文</button>
           </div>
           <div class="card-list" id="cardList"></div>
         </div>
@@ -84,10 +85,12 @@
               <div class="current-caption player-placeholder" id="currentCaption">
                 导入视频后，这里会显示当前句字幕。
               </div>
-              <div class="playback-bar player-placeholder" aria-label="播放进度">
+            </div>
+            <div class="player-progress-panel">
+              <div class="playback-bar" aria-label="播放进度">
                 <span id="playbackProgress"></span>
               </div>
-              <div class="playback-time player-placeholder" id="playbackTime">00:00 / 00:00</div>
+              <div class="playback-time" id="playbackTime">00:00 / 00:00</div>
             </div>
             <div class="video-meta-panel">
               <div>
@@ -96,15 +99,6 @@
               </div>
               <span id="videoDuration">00:00</span>
             </div>
-          </section>
-
-          <section class="drill-panel" aria-label="视频学习控制">
-            <div class="transport-row" aria-label="播放控制">
-              <button class="transport-button" type="button" id="prevLine" aria-label="上一句">‹</button>
-              <button class="transport-button main" type="button" id="playButtonSmall" aria-label="播放或暂停">▶</button>
-              <button class="transport-button" type="button" id="nextLine" aria-label="下一句">›</button>
-            </div>
-
             <div class="speed-control">
               <div class="speed-heading">
                 <span>播放速度</span>
@@ -120,13 +114,17 @@
                 <span>2x</span>
               </div>
             </div>
+          </section>
+
+          <section class="drill-panel" aria-label="视频学习控制">
+            <div class="transport-row" aria-label="播放控制">
+              <button class="transport-button" type="button" id="prevLine" aria-label="上一句">‹</button>
+              <button class="transport-button main" type="button" id="playButtonSmall" aria-label="播放或暂停">▶</button>
+              <button class="transport-button" type="button" id="nextLine" aria-label="下一句">›</button>
+            </div>
 
             <div class="quick-options">
               <p id="statusText">粘贴一个有英文字幕的 YouTube 链接开始学习。</p>
-              <label class="toggle-control">
-                <input type="checkbox" id="hideCaptionToggle" />
-                <span>隐藏画面字幕</span>
-              </label>
             </div>
           </section>
         </section>
@@ -136,6 +134,10 @@
             <button class="console-tab is-active" type="button" data-panel="subtitles">
               <span aria-hidden="true">□</span>
               字幕
+            </button>
+            <button class="console-tab" type="button" data-panel="vocabulary">
+              <span aria-hidden="true">◇</span>
+              词汇
             </button>
             <button class="console-tab" type="button" data-panel="coach">
               <span aria-hidden="true">○</span>
@@ -147,9 +149,19 @@
             <div class="subtitle-head">
               <span>字幕</span>
               <div class="subtitle-toolbar" aria-label="字幕显示设置">
-                <button class="chip" type="button" data-caption="en">EN</button>
-                <button class="chip" type="button" data-caption="zh">中文</button>
-                <button class="chip is-active" type="button" data-caption="both">双语</button>
+                <button class="language-switch" type="button" id="languageCycleButton" data-mode="both" aria-label="字幕语言：双语">
+                  <svg class="translation-glyph" viewBox="0 0 110 90" aria-hidden="true" focusable="false">
+                    <rect width="110" height="90" fill="#000000" />
+                    <g fill="#ffffff">
+                      <path d="M40 26.8 C45 22.9 53.6 21.9 60.2 23.7 L60.2 21.9 C60.2 20.9 61.3 20.3 62.1 20.9 L68.2 25.4 C69 26 68.9 27.1 68.1 27.6 L62 31.4 C61.2 31.9 60.3 31.3 60.3 30.4 L60.3 28.6 C54 27.3 47 28.2 42.4 31.7 C41.6 32.3 40.5 32.2 39.9 31.5 C39.3 30.7 39.2 27.5 40 26.8Z" />
+                      <path d="M70 64 C65 68 56.4 68.9 49.8 67 L49.8 68.9 C49.8 69.8 48.7 70.4 47.9 69.8 L41.6 65.1 C40.8 64.5 40.9 63.4 41.7 62.9 L48.1 59.2 C48.9 58.7 49.8 59.3 49.8 60.2 L49.8 62 C56.1 63.4 63.3 62.8 67.8 59 C68.6 58.3 69.8 58.5 70.4 59.2 C71 60 70.8 63.3 70 64Z" />
+                    </g>
+                    <g fill="#32e879" font-family="PingFang SC, Hiragino Sans GB, STHeiti, Microsoft YaHei, Arial Unicode MS, sans-serif" font-size="21.5" font-weight="900">
+                      <text x="42" y="48.6" text-anchor="middle" dominant-baseline="middle">中</text>
+                      <text x="68.2" y="44.4" text-anchor="middle" dominant-baseline="middle">英</text>
+                    </g>
+                  </svg>
+                </button>
                 <button class="chip" type="button" data-caption="none">隐藏</button>
               </div>
             </div>
@@ -166,11 +178,50 @@
             </div>
           </section>
 
+          <section class="console-panel" id="vocabularyPanel" aria-label="词汇分析">
+            <div class="vocab-filter-wrap">
+              <div class="vocab-filter-grid" aria-label="词汇量范围">
+                <button class="vocab-filter" type="button" data-vocab-threshold="3000">3000</button>
+                <button class="vocab-filter is-active" type="button" data-vocab-threshold="5000">5000</button>
+                <button class="vocab-filter" type="button" data-vocab-threshold="8000">8000</button>
+                <button class="vocab-filter" type="button" data-vocab-threshold="10000">1万+</button>
+              </div>
+              <p class="vocab-hint">数字代表您当前的词汇量</p>
+            </div>
+
+            <div class="vocab-result-head">
+              <em id="vocabResultCount">0 个</em>
+            </div>
+            <div class="vocab-list" id="vocabList" aria-label="超出词汇量范围的单词"></div>
+          </section>
+
           <section class="console-panel" id="coachPanel" aria-label="AI 口语讨论">
             <div class="coach-prompt">
               <div class="coach-prompt-copy">
-                <h2>开始和 AI 讨论这个视频</h2>
-                <p>你可以概述视频主要内容，说说你学到了什么，AI 会围绕你的回答继续和你交流。</p>
+                <h2 id="coachPromptTitle">复述视频内容</h2>
+                <p id="coachPromptText">用你自己的话概述这个视频讲了什么。你可以先说 2-3 句话。</p>
+              </div>
+              <div class="coach-mode-grid" aria-label="选择练习方式">
+                <button class="coach-mode-card is-active" type="button" data-coach-mode="summary">
+                  <strong>复述视频内容</strong>
+                </button>
+                <button class="coach-mode-card" type="button" data-coach-mode="experience">
+                  <strong>我的相关经历</strong>
+                </button>
+                <button class="coach-mode-card" type="button" data-coach-mode="expression">
+                  <strong>学到的表达</strong>
+                </button>
+              </div>
+            </div>
+
+            <div class="coach-correction-switch" aria-label="选择是否纠正表达">
+              <div class="coach-correction-copy">
+                <strong>纠正我的表达</strong>
+                <span id="coachCorrectionHint">AI 先给一句更自然的说法</span>
+              </div>
+              <div class="coach-correction-toggle" role="group" aria-label="纠正我的表达">
+                <button class="correction-option is-active" type="button" data-correction="true">是</button>
+                <button class="correction-option" type="button" data-correction="false">否</button>
               </div>
             </div>
 
@@ -189,6 +240,7 @@
                 id="chatText"
                 type="text"
                 value="I learned that thinking in English starts with meaningful input."
+                placeholder="Try: This video is mainly about..."
                 aria-label="输入你想和 AI 讨论的内容"
               />
               <button class="send-button" type="submit">发送</button>
@@ -205,7 +257,7 @@
 
     <script>
       document.write(
-        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=design-spec-6"><\/script>`,
+        `<script src="${location.protocol === "file:" ? "./script.js" : "/web/script.js"}?v=coach-toggle-2"><\/script>`,
       );
     </script>
   </body>

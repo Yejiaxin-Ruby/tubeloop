@@ -5,8 +5,10 @@ import json
 import os
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -20,6 +22,8 @@ from pydantic import BaseModel, Field
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "youtube-english-web"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+VOCAB_LEVELS_PATH = DATA_DIR / "vocab_levels.json"
 DB_PATH = Path(
     os.getenv("APP_DB_PATH", str(Path(__file__).with_name("youtube_learning.sqlite3"))),
 ).expanduser()
@@ -27,12 +31,63 @@ APP_PORT = int(os.getenv("PORT", "8000"))
 MOCK_URL = "https://www.youtube.com/watch?v=mock-english-thinking"
 AI_BUILDER_BASE_URL = "https://space.ai-builders.com/backend/v1"
 AI_BUILDER_CHAT_MODEL = "gpt-5"
+AI_BUILDER_FALLBACK_CHAT_MODELS = ("deepseek", "deepseek-v4-flash")
 AI_BUILDER_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
 SUPADATA_BASE_URL = "https://api.supadata.ai/v1"
 MAX_VIDEO_SECONDS = 60 * 60
 CAPTION_BREAK_PATTERN = re.compile(r"[,.!?;:，。！？；：]$")
 MAX_MERGED_CAPTION_CHARS = 140
 MAX_MERGED_CAPTION_SECONDS = 14
+WORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z'-]*")
+VOCAB_THRESHOLDS = {3000, 5000, 8000, 10000}
+IRREGULAR_LEMMAS = {
+    "am": "be",
+    "are": "be",
+    "is": "be",
+    "was": "be",
+    "were": "be",
+    "been": "be",
+    "being": "be",
+    "has": "have",
+    "had": "have",
+    "does": "do",
+    "did": "do",
+    "done": "do",
+    "went": "go",
+    "gone": "go",
+    "got": "get",
+    "gotten": "get",
+    "made": "make",
+    "took": "take",
+    "taken": "take",
+    "came": "come",
+    "saw": "see",
+    "seen": "see",
+    "said": "say",
+    "told": "tell",
+    "thought": "think",
+    "brought": "bring",
+    "bought": "buy",
+    "found": "find",
+    "gave": "give",
+    "given": "give",
+    "knew": "know",
+    "known": "know",
+    "left": "leave",
+    "felt": "feel",
+    "heard": "hear",
+    "kept": "keep",
+    "wrote": "write",
+    "written": "write",
+    "children": "child",
+    "men": "man",
+    "women": "woman",
+    "people": "person",
+    "better": "good",
+    "best": "good",
+    "worse": "bad",
+    "worst": "bad",
+}
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -54,6 +109,7 @@ class ImportVideoRequest(BaseModel):
 class ChatRequest(BaseModel):
     video_id: int
     message: str = Field(..., min_length=1)
+    correct_expression: bool = True
 
 
 class ExpressionCardRequest(BaseModel):
@@ -68,6 +124,11 @@ class ExpressionCardRequest(BaseModel):
 
 class TranslationRequest(BaseModel):
     text: str = Field(..., min_length=1)
+
+
+class TranslateSubtitlesRequest(BaseModel):
+    focus_index: Optional[int] = None
+    window_size: int = 40
 
 
 class ExpressionExplainRequest(BaseModel):
@@ -191,7 +252,7 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def get_ai_builder_token() -> str | None:
-    return os.getenv("AI_BUILDER_TOKEN")
+    return os.getenv("AI_BUILDER_TOKEN") or os.getenv("SUPER_MIND_API_KEY")
 
 
 def has_ai_builder_token() -> bool:
@@ -207,31 +268,51 @@ def call_builder_chat(
     *,
     temperature: float = 0.4,
     max_tokens: int = 500,
+    model_candidates: list[str] | None = None,
 ) -> str:
     token = get_ai_builder_token()
     if not token:
-        raise RuntimeError("AI_BUILDER_TOKEN is not configured")
+        raise RuntimeError("AI_BUILDER_TOKEN or SUPER_MIND_API_KEY is not configured")
 
-    payload = {
-        "model": os.getenv("AI_BUILDER_CHAT_MODEL", AI_BUILDER_CHAT_MODEL),
-        "messages": messages,
-        "max_tokens": max(max_tokens, 1000),
-    }
+    if model_candidates:
+        models = list(dict.fromkeys(model_candidates))
+    else:
+        configured_model = os.getenv("AI_BUILDER_CHAT_MODEL", AI_BUILDER_CHAT_MODEL)
+        fallback_models = [
+            model.strip()
+            for model in os.getenv("AI_BUILDER_FALLBACK_CHAT_MODELS", ",".join(AI_BUILDER_FALLBACK_CHAT_MODELS)).split(",")
+            if model.strip()
+        ]
+        models = list(dict.fromkeys([configured_model, *fallback_models]))
     headers = {"Authorization": f"Bearer {token}"}
-    with httpx.Client(timeout=45) as client:
-        response = client.post(
-            f"{AI_BUILDER_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
+    last_error: Exception | None = None
 
-    content = data["choices"][0]["message"].get("content") or ""
-    content = content.strip()
-    if not content:
-        raise RuntimeError("AI Builder returned an empty response")
-    return content
+    with httpx.Client(timeout=45) as client:
+        for model in models:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max(max_tokens, 1000),
+            }
+            try:
+                response = client.post(
+                    f"{AI_BUILDER_BASE_URL}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+                content = data["choices"][0]["message"].get("content") or ""
+                content = content.strip()
+                if content:
+                    return content
+                last_error = RuntimeError(f"AI Builder returned an empty response from {model}")
+                print(f"[builder empty response] model={model}", flush=True)
+            except Exception as error:
+                last_error = error
+                print(f"[builder chat failed] model={model} {type(error).__name__}: {error}", flush=True)
+
+    raise RuntimeError(str(last_error or "AI Builder returned an empty response"))
 
 
 def parse_json_object(text: str) -> dict[str, Any]:
@@ -259,6 +340,33 @@ def parse_json_array(text: str) -> list[Any]:
     if not isinstance(data, list):
         raise ValueError("Expected JSON array")
     return data
+
+
+def parse_translated_lines(text: str, expected_count: int) -> list[str]:
+    try:
+        parsed = [str(item).strip() for item in parse_json_array(text)]
+        if len(parsed) == expected_count:
+            return parsed
+    except Exception:
+        pass
+
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        cleaned = raw_line.strip().strip(",")
+        cleaned = re.sub(r"^\s*(?:[-*•]|\d+[.)、])\s*", "", cleaned).strip()
+        cleaned = cleaned.strip("\"'“”")
+        if not cleaned:
+            continue
+        if cleaned.startswith(("以下", "翻译", "Here", "Sure", "好的")):
+            continue
+        if cleaned in {"[", "]", "```", "```json"}:
+            continue
+        lines.append(cleaned)
+    if len(lines) > expected_count:
+        lines = lines[-expected_count:]
+    if len(lines) == expected_count:
+        return lines
+    raise ValueError("Translation count mismatch")
 
 
 def extract_youtube_video_id(url: str) -> str | None:
@@ -739,12 +847,24 @@ def fetch_transcript_caption_lines(
 
     api = YouTubeTranscriptApi()
     transcript_list = api.list(video_id)
-    english_transcript = transcript_list.find_transcript(["en"])
+
+    def find_transcript_by_prefix(prefixes: list[str]) -> Any:
+        try:
+            return transcript_list.find_transcript(prefixes)
+        except Exception:
+            lowered = [prefix.lower() for prefix in prefixes]
+            for transcript in transcript_list:
+                code = str(getattr(transcript, "language_code", "") or "").lower()
+                if any(code == prefix or code.startswith(f"{prefix}-") for prefix in lowered):
+                    return transcript
+            raise
+
+    english_transcript = find_transcript_by_prefix(["en"])
     english_lines = transcript_to_caption_lines(english_transcript.fetch())
 
     chinese_lines: list[dict[str, Any]] = []
     try:
-        chinese_transcript = transcript_list.find_transcript(["zh-CN", "zh-Hans", "zh"])
+        chinese_transcript = find_transcript_by_prefix(["zh-CN", "zh-Hans", "zh"])
         chinese_lines = transcript_to_caption_lines(chinese_transcript.fetch())
     except Exception:
         if english_transcript.is_translatable:
@@ -759,7 +879,7 @@ def fetch_transcript_caption_lines(
 def translate_caption_lines(lines: list[dict[str, Any]]) -> list[str]:
     if not lines:
         return []
-    chunk_size = 2
+    chunk_size = 8
     translations: list[str] = []
     for chunk_start in range(0, len(lines), chunk_size):
         chunk = lines[chunk_start : chunk_start + chunk_size]
@@ -788,6 +908,11 @@ def translate_caption_chunk(lines: list[dict[str, Any]]) -> list[str]:
             print(f"[single subtitle translation failed] {type(error).__name__}: {error}", flush=True)
             return [""]
 
+    translation_models = [
+        model.strip()
+        for model in os.getenv("AI_BUILDER_TRANSLATION_MODELS", "deepseek,deepseek-v4-flash,gpt-5").split(",")
+        if model.strip()
+    ]
     numbered = "\n".join(
         f"{index + 1}. {line['text']}"
         for index, line in enumerate(lines)
@@ -799,17 +924,16 @@ def translate_caption_chunk(lines: list[dict[str, Any]]) -> list[str]:
                     "role": "system",
                     "content": (
                         "Translate English subtitle lines into concise, natural Simplified Chinese. "
-                        "Return a strict JSON array only. Keep the same order and same item count."
+                        f"Return exactly {len(lines)} lines. Each output line must contain only the Chinese translation "
+                        "for the corresponding input line. Do not add numbering, explanations, or blank lines."
                     ),
                 },
                 {"role": "user", "content": numbered},
             ],
             max_tokens=max(700, len(lines) * 120),
+            model_candidates=translation_models,
         )
-        parsed = [str(item).strip() for item in parse_json_array(raw)]
-        if len(parsed) != len(lines):
-            raise ValueError("Translation count mismatch")
-        return parsed
+        return parse_translated_lines(raw, len(lines))
     except Exception as error:
         print(f"[subtitle translation split retry] {type(error).__name__}: {error}", flush=True)
         midpoint = len(lines) // 2
@@ -851,13 +975,47 @@ def update_chinese_translation_status(
     )
 
 
-def generate_chinese_subtitles_task(video_id: int) -> None:
+def order_translation_rows(
+    rows: list[dict[str, Any]],
+    focus_index: int | None,
+    window_size: int,
+) -> list[dict[str, Any]]:
+    if focus_index is None:
+        return rows
+    window_size = max(8, min(window_size, 80))
+    window_end = focus_index + window_size
+    return sorted(
+        rows,
+        key=lambda row: (
+            0 if focus_index <= int(row["line_index"]) < window_end else 1,
+            abs(int(row["line_index"]) - focus_index),
+            int(row["line_index"]),
+        ),
+    )
+
+
+def translate_rows_chunk(chunk: list[dict[str, Any]]) -> list[tuple[int, str]]:
+    translations = translate_caption_chunk(
+        [{"text": row["english_text"]} for row in chunk],
+    )
+    return [
+        (int(row["id"]), str(translation or "").strip())
+        for row, translation in zip(chunk, translations)
+        if str(translation or "").strip()
+    ]
+
+
+def generate_chinese_subtitles_task(
+    video_id: int,
+    focus_index: int | None = None,
+    window_size: int = 40,
+) -> None:
     with connect() as db:
         rows = [
             row_to_dict(row)
             for row in db.execute(
                 """
-                SELECT id, english_text
+                SELECT id, line_index, english_text
                 FROM subtitle_lines
                 WHERE video_id = ? AND TRIM(chinese_text) = ''
                 ORDER BY line_index
@@ -871,27 +1029,40 @@ def generate_chinese_subtitles_task(video_id: int) -> None:
         update_chinese_translation_status(db, video_id, "running")
 
     updated_count = 0
-    chunk_size = 2
-    for chunk_start in range(0, len(rows), chunk_size):
-        chunk = rows[chunk_start : chunk_start + chunk_size]
-        translations = translate_caption_chunk(
-            [{"text": row["english_text"]} for row in chunk],
-        )
-        with connect() as db:
-            for row, translation in zip(chunk, translations):
-                cleaned = str(translation or "").strip()
-                if not cleaned:
-                    continue
-                updated_count += 1
+    chunk_size = 10
+    ordered_rows = order_translation_rows(rows, focus_index, window_size)
+    chunks = [
+        ordered_rows[chunk_start : chunk_start + chunk_size]
+        for chunk_start in range(0, len(ordered_rows), chunk_size)
+    ]
+    max_workers = min(4, max(1, len(chunks)))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(translate_rows_chunk, chunk) for chunk in chunks]
+        for future in as_completed(futures):
+            translated_pairs = future.result()
+            if not translated_pairs:
+                continue
+            with connect() as db:
+                for subtitle_id, cleaned in translated_pairs:
+                    updated_count += 1
+                    db.execute(
+                        """
+                        UPDATE subtitle_lines
+                        SET chinese_text = ?
+                        WHERE id = ? AND TRIM(chinese_text) = ''
+                        """,
+                        (cleaned, subtitle_id),
+                    )
                 db.execute(
                     """
-                    UPDATE subtitle_lines
-                    SET chinese_text = ?
+                    UPDATE videos
+                    SET updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (cleaned, row["id"]),
+                    (video_id,),
                 )
-            update_chinese_translation_status(db, video_id, "running")
+                update_chinese_translation_status(db, video_id, "running")
 
     with connect() as db:
         counts = subtitle_translation_counts(db, video_id)
@@ -932,15 +1103,6 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
             print(f"[youtube transcript] loaded {len(english_lines)} lines for {video_id}", flush=True)
     except Exception as error:
         print(f"[youtube transcript failed] {type(error).__name__}: {error}", flush=True)
-
-    if not english_lines:
-        try:
-            english_lines = fetch_supadata_english_lines(video_id)
-            if english_lines:
-                print(f"[supadata transcript fallback] loaded {len(english_lines)} lines for {video_id}", flush=True)
-                info = merge_video_info(info, fetch_supadata_video_info(video_id))
-        except Exception as error:
-            print(f"[supadata transcript failed] {type(error).__name__}: {error}", flush=True)
 
     if not english_lines:
         try:
@@ -986,7 +1148,22 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
                         detail="这个视频没有可读取的英文字幕。请换一个开启英文字幕的视频。",
                     )
                 english_lines = fetch_caption_entries(english_track)
-                chinese_lines = []
+                chinese_track = choose_caption_track(
+                    subtitle_tracks,
+                    ("zh-cn", "zh-hans", "zh"),
+                ) or choose_caption_track(
+                    automatic_tracks,
+                    ("zh-cn", "zh-hans", "zh"),
+                )
+                if chinese_track:
+                    try:
+                        chinese_lines = fetch_caption_entries(chinese_track)
+                    except Exception as chinese_error:
+                        chinese_lines = []
+                        print(
+                            f"[yt-dlp chinese caption fallback failed] {type(chinese_error).__name__}: {chinese_error}",
+                            flush=True,
+                        )
             except HTTPException:
                 raise
             except Exception as caption_error:
@@ -1041,20 +1218,33 @@ def fetch_youtube_video(url: str) -> ImportedVideo:
     )
 
 
-def mock_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> str:
+def mock_chat_reply(
+    db: sqlite3.Connection,
+    video_id: int,
+    message: str,
+    correct_expression: bool = True,
+) -> str:
     video = get_video_or_404(db, video_id)
     lowered = message.lower()
+    correction_prefix = ""
+    if correct_expression:
+        correction_prefix = (
+            "A more natural way to say it: Try making your sentence a little clearer and more direct.\n\n"
+        )
     if any(word in lowered for word in ["learn", "学", "学到", "表达"]):
         return (
+            correction_prefix +
             "Good. Try turning that learning into one sentence you can reuse. "
             "For this video, a useful pattern is: 'The real shift happens when...'."
         )
     if any(word in lowered for word in ["summary", "概述", "main", "主要"]):
         return (
+            correction_prefix +
             f"The main idea of '{video['title']}' is that English becomes easier "
             "when you connect it directly with meaning instead of translating word by word."
         )
     return (
+        correction_prefix +
         "That is a good starting point. Can you connect your answer to one specific "
         "sentence from the video, then say whether you agree with it?"
     )
@@ -1092,9 +1282,25 @@ def subtitles_context(db: sqlite3.Connection, video_id: int, max_chars: int = 12
     return "\n".join(sampled)[:max_chars]
 
 
-def build_ai_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> str:
+def build_ai_chat_reply(
+    db: sqlite3.Connection,
+    video_id: int,
+    message: str,
+    correct_expression: bool = True,
+) -> str:
     video = get_video_or_404(db, video_id)
     context = subtitles_context(db, video_id)
+    correction_instruction = (
+        "The learner wants expression correction. Start with exactly one concise correction "
+        "or more natural rewrite only when the learner's English is clearly unnatural, "
+        "confusing, or likely to be misunderstood. If their meaning is already clear and "
+        "close enough to natural English, do not correct it; directly respond to their idea "
+        "and ask one simple follow-up question. Do not list many errors."
+        if correct_expression
+        else "The learner does not want expression correction in this round. Do not correct "
+        "grammar, wording, or spelling. Only respond to their idea and ask one simple "
+        "follow-up question about the video."
+    )
     try:
         return call_builder_chat(
             [
@@ -1104,7 +1310,8 @@ def build_ai_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> 
                         "You are an English learning conversation partner for a Chinese learner. "
                         "Discuss the current YouTube video. Keep replies concise, natural, and "
                         "easy to answer orally. Use English by default, but include brief Chinese "
-                        "support when it helps comprehension. Do not grade pronunciation."
+                        "support when it helps comprehension. Do not grade pronunciation. "
+                        f"{correction_instruction}"
                     ),
                 },
                 {
@@ -1122,7 +1329,7 @@ def build_ai_chat_reply(db: sqlite3.Connection, video_id: int, message: str) -> 
         )
     except Exception as error:
         print(f"[builder chat fallback] {type(error).__name__}: {error}", flush=True)
-        return mock_chat_reply(db, video_id, message)
+        return mock_chat_reply(db, video_id, message, correct_expression)
 
 
 def explain_expression_with_builder(expression_text: str, context: str) -> dict[str, str]:
@@ -1175,6 +1382,199 @@ def translate_text_with_builder(text: str) -> str:
         return f"（mock 翻译）{text}"
 
 
+@lru_cache(maxsize=1)
+def load_vocab_levels() -> dict[str, int]:
+    if not VOCAB_LEVELS_PATH.exists():
+        return {}
+    return json.loads(VOCAB_LEVELS_PATH.read_text(encoding="utf-8"))
+
+
+def normalize_word(token: str) -> str:
+    return re.sub(r"^[^a-z]+|[^a-z]+$", "", token.lower()).strip("'")
+
+
+def simple_lemma(word: str, vocab_levels: dict[str, int]) -> str:
+    if not word:
+        return word
+    if word in vocab_levels or word in IRREGULAR_LEMMAS:
+        return IRREGULAR_LEMMAS.get(word, word)
+
+    candidates: list[str] = []
+    if word.endswith("ies") and len(word) > 4:
+        candidates.append(word[:-3] + "y")
+    if word.endswith("ves") and len(word) > 4:
+        candidates.extend([word[:-3] + "f", word[:-3] + "fe"])
+    if word.endswith("ing") and len(word) > 5:
+        stem = word[:-3]
+        candidates.append(stem)
+        if len(stem) > 2 and stem[-1] == stem[-2]:
+            candidates.append(stem[:-1])
+        candidates.append(stem + "e")
+    if word.endswith("ed") and len(word) > 4:
+        stem = word[:-2]
+        candidates.append(stem)
+        if len(stem) > 2 and stem[-1] == stem[-2]:
+            candidates.append(stem[:-1])
+        candidates.append(stem + "e")
+    if word.endswith("es") and len(word) > 4:
+        candidates.append(word[:-2])
+    if word.endswith("s") and len(word) > 3:
+        candidates.append(word[:-1])
+
+    for candidate in candidates:
+        if candidate in vocab_levels:
+            return candidate
+    return word
+
+
+def include_vocab_item(level: int | None, threshold: int) -> bool:
+    if threshold >= 10000:
+        return level is None
+    return level is None or level > threshold
+
+
+def cached_translations(db: sqlite3.Connection, words: list[str]) -> dict[str, str]:
+    if not words:
+        return {}
+    placeholders = ",".join("?" for _ in words)
+    rows = db.execute(
+        f"""
+        SELECT word, chinese FROM vocabulary_translations
+        WHERE word IN ({placeholders})
+        """,
+        words,
+    ).fetchall()
+    return {row["word"]: row["chinese"] for row in rows}
+
+
+def translate_vocabulary_words(words: list[str]) -> dict[str, str]:
+    words = [word for word in words if word]
+    if not words:
+        return {}
+    if not has_ai_builder_token():
+        return {word: "" for word in words}
+    prompt = (
+        "Translate these English vocabulary items into concise Chinese meanings. "
+        "Return only a JSON object whose keys are the original English words and "
+        "whose values are short Chinese translations. Do not add explanations.\n\n"
+        + json.dumps(words, ensure_ascii=False)
+    )
+    try:
+        raw = call_builder_chat(
+            [
+                {
+                    "role": "system",
+                    "content": "You are an English-Chinese vocabulary dictionary. Return strict JSON only.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max(300, len(words) * 24),
+            model_candidates=("deepseek", "deepseek-v4-flash", "gpt-5"),
+        )
+        match = re.search(r"\{.*\}", raw, flags=re.S)
+        payload = json.loads(match.group(0) if match else raw)
+        return {
+            word: str(payload.get(word, "")).strip()
+            for word in words
+            if str(payload.get(word, "")).strip()
+        }
+    except Exception:
+        return {word: "" for word in words}
+
+
+def ensure_vocabulary_translations(db: sqlite3.Connection, words: list[str]) -> dict[str, str]:
+    unique_words = list(dict.fromkeys(words))
+    cached = cached_translations(db, unique_words)
+    missing = [word for word in unique_words if word not in cached]
+    for start in range(0, len(missing), 30):
+        batch = missing[start : start + 30]
+        translated = translate_vocabulary_words(batch)
+        for word in batch:
+            chinese = translated.get(word, "")
+            if chinese:
+                db.execute(
+                    """
+                    INSERT OR REPLACE INTO vocabulary_translations (word, chinese, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (word, chinese),
+                )
+                cached[word] = chinese
+    db.commit()
+    return cached
+
+
+def analyze_video_vocabulary(
+    db: sqlite3.Connection,
+    video_id: int,
+    threshold: int,
+    limit: int = 80,
+) -> dict[str, Any]:
+    get_video_or_404(db, video_id)
+    vocab_levels = load_vocab_levels()
+    if not vocab_levels:
+        raise HTTPException(status_code=500, detail="Vocabulary data is missing.")
+
+    rows = db.execute(
+        """
+        SELECT start_time, english_text
+        FROM subtitle_lines
+        WHERE video_id = ?
+        ORDER BY line_index
+        """,
+        (video_id,),
+    ).fetchall()
+    items: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        text = row["english_text"] or ""
+        for token in WORD_PATTERN.findall(text):
+            word = normalize_word(token)
+            if len(word) < 2:
+                continue
+            lemma = simple_lemma(word, vocab_levels)
+            level = vocab_levels.get(lemma)
+            if not include_vocab_item(level, threshold):
+                continue
+            item = items.setdefault(
+                lemma,
+                {
+                    "surface": token,
+                    "lemma": lemma,
+                    "level": level,
+                    "count": 0,
+                    "examples": [],
+                },
+            )
+            item["count"] += 1
+            if item["surface"].lower() == lemma and token != item["surface"]:
+                item["surface"] = token
+            if len(item["examples"]) < 2:
+                item["examples"].append({"time": row["start_time"], "text": text})
+
+    sorted_items = sorted(
+        items.values(),
+        key=lambda item: (
+            10001 if item["level"] is None else item["level"],
+            item["lemma"],
+        ),
+    )
+    limited_items = sorted_items[: max(1, min(limit, 200))]
+    translations = ensure_vocabulary_translations(
+        db,
+        [item["lemma"] for item in limited_items],
+    )
+    for item in limited_items:
+        item["level_label"] = "1万+" if item["level"] is None else str(item["level"])
+        item["translation"] = translations.get(item["lemma"], "")
+
+    return {
+        "video_id": video_id,
+        "threshold": threshold,
+        "total": len(sorted_items),
+        "items": limited_items,
+    }
+
+
 def init_db() -> None:
     with connect() as db:
         db.executescript(
@@ -1223,6 +1623,12 @@ def init_db() -> None:
               text TEXT NOT NULL,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY (video_id) REFERENCES videos(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS vocabulary_translations (
+              word TEXT PRIMARY KEY,
+              chinese TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
@@ -1454,6 +1860,10 @@ def queue_chinese_translation_if_needed(
     db: sqlite3.Connection,
     video_id: int,
     background_tasks: BackgroundTasks,
+    *,
+    force: bool = False,
+    focus_index: int | None = None,
+    window_size: int = 40,
 ) -> None:
     counts = subtitle_translation_counts(db, video_id)
     if not counts["total"] or counts["translated"] >= counts["total"]:
@@ -1468,10 +1878,10 @@ def queue_chinese_translation_if_needed(
         )
         return
     video = get_video_or_404(db, video_id)
-    if video["chinese_translation_status"] == "running":
+    if video["chinese_translation_status"] == "running" and not force:
         return
     update_chinese_translation_status(db, video_id, "pending")
-    background_tasks.add_task(generate_chinese_subtitles_task, video_id)
+    background_tasks.add_task(generate_chinese_subtitles_task, video_id, focus_index, window_size)
 
 
 @app.on_event("startup")
@@ -1517,7 +1927,6 @@ def import_video(request: ImportVideoRequest, background_tasks: BackgroundTasks)
     imported = fetch_youtube_video(request.url)
     with connect() as db:
         video_id = upsert_imported_video(db, imported)
-        queue_chinese_translation_if_needed(db, video_id, background_tasks)
         return video_payload(db, video_id)
 
 
@@ -1558,11 +1967,34 @@ def get_translation_status(video_id: int) -> dict[str, Any]:
         }
 
 
+@app.get("/api/videos/{video_id}/vocabulary")
+def get_video_vocabulary(
+    video_id: int,
+    threshold: int = 5000,
+    limit: int = 80,
+) -> dict[str, Any]:
+    if threshold not in VOCAB_THRESHOLDS:
+        raise HTTPException(status_code=400, detail="threshold must be 3000, 5000, 8000, or 10000")
+    with connect() as db:
+        return analyze_video_vocabulary(db, video_id, threshold, limit)
+
+
 @app.post("/api/videos/{video_id}/translate-subtitles")
-def translate_video_subtitles(video_id: int, background_tasks: BackgroundTasks) -> dict[str, Any]:
+def translate_video_subtitles(
+    video_id: int,
+    background_tasks: BackgroundTasks,
+    request: TranslateSubtitlesRequest = TranslateSubtitlesRequest(),
+) -> dict[str, Any]:
     with connect() as db:
         get_video_or_404(db, video_id)
-        queue_chinese_translation_if_needed(db, video_id, background_tasks)
+        queue_chinese_translation_if_needed(
+            db,
+            video_id,
+            background_tasks,
+            force=True,
+            focus_index=request.focus_index,
+            window_size=request.window_size,
+        )
         video = get_video_or_404(db, video_id)
         counts = subtitle_translation_counts(db, video_id)
         return {
@@ -1646,7 +2078,12 @@ def chat(request: ChatRequest) -> dict[str, Any]:
             "INSERT INTO messages (video_id, role, text) VALUES (?, ?, ?)",
             (request.video_id, "user", request.message),
         )
-        reply = build_ai_chat_reply(db, request.video_id, request.message)
+        reply = build_ai_chat_reply(
+            db,
+            request.video_id,
+            request.message,
+            request.correct_expression,
+        )
         cursor = db.execute(
             "INSERT INTO messages (video_id, role, text) VALUES (?, ?, ?)",
             (request.video_id, "ai", reply),

@@ -5,6 +5,8 @@ let currentTranslationStatus = "idle";
 let currentTranslationError = "";
 let activeIndex = 0;
 let captionMode = "both";
+let showEnglish = true;
+let showChinese = true;
 let isPlaying = false;
 
 const apiBase = "/api";
@@ -16,6 +18,7 @@ const selectionResult = document.querySelector("#selectionResult");
 const saveToast = document.querySelector("#saveToast");
 const saveToastIcon = document.querySelector(".save-toast-icon");
 const saveToastText = document.querySelector("#saveToastText");
+const toggleLibraryChineseButton = document.querySelector("#toggleLibraryChinese");
 const currentCaption = document.querySelector("#currentCaption");
 const statusText = document.querySelector("#statusText");
 const translationStatus = document.querySelector("#translationStatus");
@@ -39,6 +42,16 @@ const speedRange = document.querySelector("#speedRange");
 const speedLabel = document.querySelector("#speedLabel");
 const globalPanel = document.querySelector("#globalPanel");
 const videoUrlInput = document.querySelector("#videoUrl");
+const languageCycleButton = document.querySelector("#languageCycleButton");
+const hideCaptionButton = document.querySelector('[data-caption="none"]');
+const coachPromptTitle = document.querySelector("#coachPromptTitle");
+const coachPromptText = document.querySelector("#coachPromptText");
+const coachModeButtons = document.querySelectorAll(".coach-mode-card");
+const correctionOptionButtons = document.querySelectorAll(".correction-option");
+const coachCorrectionHint = document.querySelector("#coachCorrectionHint");
+const vocabList = document.querySelector("#vocabList");
+const vocabResultCount = document.querySelector("#vocabResultCount");
+const vocabFilterButtons = document.querySelectorAll(".vocab-filter");
 let isListening = false;
 let mediaRecorder = null;
 let audioChunks = [];
@@ -55,7 +68,36 @@ let youtubePlayer = null;
 let youtubePlayerReady = false;
 let youtubeApiPromise = null;
 let currentYoutubeVideoId = "";
+let currentVocabThreshold = 5000;
+let vocabularyRequestId = 0;
+let hideLibraryChinese = false;
+let currentCoachMode = "summary";
+let shouldCorrectExpression = true;
 const publicAppUrl = "https://tubeloop.ai-builders.space/";
+
+const coachModes = {
+  summary: {
+    title: "复述视频内容",
+    description: "用你自己的话概述这个视频讲了什么。你可以先说 2-3 句话。",
+    opener: "先试着用 2-3 句话复述这个视频。你不用说得完美，我会先帮你把表达改自然，再继续追问视频内容。",
+    placeholder: "Try: This video is mainly about...",
+    starter: "This video is mainly about...",
+  },
+  experience: {
+    title: "我的相关经历",
+    description: "分享一个和视频主题相关的个人经历，哪怕很短也可以。",
+    opener: "你可以讲一个和视频主题有关的经历。我会先帮你调整英文表达，然后继续问你经历里的细节。",
+    placeholder: "Try: This reminds me of a time when...",
+    starter: "This reminds me of a time when...",
+  },
+  expression: {
+    title: "学到的表达",
+    description: "说说你在这个视频里学到的词、短语或句子，并试着造句。",
+    opener: "选一个你从视频里学到的表达，试着用它造一个自己的句子。我会先优化句子，再补充这个表达的自然用法。",
+    placeholder: "Try: One useful expression I learned is...",
+    starter: "One useful expression I learned is...",
+  },
+};
 
 const fileModeVideo = {
   id: 1,
@@ -138,14 +180,43 @@ async function apiFetch(path, options = {}) {
 }
 
 function visibleText(line) {
-  if (captionMode === "en") return line.en;
-  if (captionMode === "zh") return line.zh;
+  if (showEnglish && showChinese) return line.en || line.zh;
+  if (showEnglish) return line.en;
+  if (showChinese) return line.zh;
   if (captionMode === "none") return "";
   return line.en;
 }
 
+function syncCaptionMode() {
+  if (showEnglish && showChinese) {
+    captionMode = "both";
+  } else if (showEnglish) {
+    captionMode = "en";
+  } else if (showChinese) {
+    captionMode = "zh";
+  } else {
+    captionMode = "none";
+  }
+  if (languageCycleButton) {
+    const labelMap = {
+      both: "字幕语言：双语",
+      en: "字幕语言：英文",
+      zh: "字幕语言：中文",
+      none: "字幕语言：已隐藏",
+    };
+    languageCycleButton.dataset.mode = captionMode;
+    languageCycleButton.setAttribute("aria-label", labelMap[captionMode] || labelMap.both);
+    languageCycleButton.title = "切换字幕语言";
+  }
+  hideCaptionButton?.classList.toggle("is-active", captionMode === "none");
+}
+
 function hasChineseSubtitles() {
   return subtitles.some((line) => String(line.zh || "").trim());
+}
+
+function translatedSubtitleCount() {
+  return subtitles.filter((line) => String(line.zh || "").trim()).length;
 }
 
 function getLineStartSeconds(line) {
@@ -192,24 +263,6 @@ function renderSubtitles() {
     return;
   }
 
-  if (captionMode === "none") {
-    const hidden = document.createElement("article");
-    hidden.className = "subtitle-line is-active subtitle-hidden-state";
-    hidden.innerHTML = `<div class="subtitle-text"><p class="zh-text">字幕已隐藏</p></div>`;
-    subtitleList.append(hidden);
-    updateCaption();
-    return;
-  }
-
-  if (captionMode === "zh" && !hasChineseSubtitles()) {
-    const pending = document.createElement("article");
-    pending.className = "subtitle-line is-active subtitle-hidden-state";
-    pending.innerHTML = `<div class="subtitle-text"><p class="zh-text">中文字幕正在生成，英文字幕可以先使用。</p></div>`;
-    subtitleList.append(pending);
-    updateCaption();
-    return;
-  }
-
   subtitles.forEach((line, index) => {
     const row = document.createElement("article");
     row.className = `subtitle-line${index === activeIndex ? " is-active" : ""}`;
@@ -226,18 +279,30 @@ function renderSubtitles() {
     const textWrap = document.createElement("div");
     textWrap.className = "subtitle-text";
 
-    if (captionMode === "both" || captionMode === "en") {
+    if (showEnglish) {
       const en = document.createElement("p");
       en.className = "en-text";
       en.textContent = line.en;
       textWrap.append(en);
     }
 
-    if ((captionMode === "both" || captionMode === "zh") && line.zh) {
+    if (showChinese && line.zh) {
       const zh = document.createElement("p");
       zh.className = "zh-text";
       zh.textContent = line.zh;
       textWrap.append(zh);
+    } else if (showChinese) {
+      const zh = document.createElement("p");
+      zh.className = "zh-text is-pending";
+      zh.textContent =
+        currentTranslationStatus === "pending" || currentTranslationStatus === "running"
+          ? "翻译中..."
+          : "暂无中文字幕";
+      textWrap.append(zh);
+    }
+
+    if (!showEnglish && !showChinese) {
+      textWrap.classList.add("is-hidden-caption");
     }
 
     row.append(timestamp, rail, textWrap);
@@ -252,8 +317,110 @@ function renderSubtitles() {
   updateCaption();
 }
 
+function formatVocabThreshold(value) {
+  return value >= 10000 ? "1万+" : String(value);
+}
+
+async function renderVocabularyPanel() {
+  if (!vocabList) return;
+  const threshold = currentVocabThreshold;
+  const thresholdLabel = formatVocabThreshold(threshold);
+
+  vocabFilterButtons.forEach((button) => {
+    button.classList.toggle("is-active", Number(button.dataset.vocabThreshold) === threshold);
+  });
+
+  vocabList.replaceChildren();
+  if (!currentVideoId) {
+    vocabResultCount.textContent = "0 个";
+    const empty = document.createElement("div");
+    empty.className = "vocab-empty";
+    empty.textContent = "导入视频后，这里会显示超出所选词汇量的单词。";
+    vocabList.append(empty);
+    return;
+  }
+
+  const requestId = ++vocabularyRequestId;
+  vocabResultCount.textContent = "分析中";
+  const loading = document.createElement("div");
+  loading.className = "vocab-empty";
+  loading.textContent = "正在分析当前视频字幕...";
+  vocabList.append(loading);
+
+  try {
+    const result = await apiFetch(
+      `/videos/${currentVideoId}/vocabulary?threshold=${threshold}&limit=30`,
+    );
+    if (requestId !== vocabularyRequestId) return;
+    const items = result.items || [];
+    vocabResultCount.textContent = `${result.total ?? items.length} 个`;
+    vocabList.replaceChildren();
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "vocab-empty";
+      empty.textContent = `当前字幕里暂时没有超过 ${thresholdLabel} 词汇量的单词。`;
+      vocabList.append(empty);
+      return;
+    }
+
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "vocab-card";
+      const word = document.createElement("strong");
+      word.textContent = item.surface || item.lemma;
+      const translation = document.createElement("p");
+      translation.textContent = item.translation || "暂无翻译";
+      card.append(word, translation);
+      vocabList.append(card);
+    });
+  } catch (error) {
+    if (requestId !== vocabularyRequestId) return;
+    vocabResultCount.textContent = "0 个";
+    vocabList.replaceChildren();
+    const empty = document.createElement("div");
+    empty.className = "vocab-empty";
+    empty.textContent = error.message;
+    vocabList.append(empty);
+  }
+}
+
+function setCoachMode(mode, options = {}) {
+  const normalizedMode = mode in coachModes ? mode : "summary";
+  const config = coachModes[normalizedMode];
+  currentCoachMode = normalizedMode;
+
+  coachModeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.coachMode === currentCoachMode);
+  });
+
+  if (coachPromptTitle) coachPromptTitle.textContent = config.title;
+  if (coachPromptText) coachPromptText.textContent = config.description;
+  if (chatText && !isListening) {
+    chatText.placeholder = config.placeholder;
+    if (options.setStarter) {
+      chatText.value = config.starter;
+    }
+  }
+  if (options.resetChat && chatLog) {
+    chatLog.replaceChildren();
+    appendMessage("ai", config.opener);
+  }
+}
+
+function setCoachCorrection(enabled) {
+  shouldCorrectExpression = Boolean(enabled);
+  correctionOptionButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.correction === String(shouldCorrectExpression));
+  });
+  if (coachCorrectionHint) {
+    coachCorrectionHint.textContent = shouldCorrectExpression
+      ? "AI 先给一句更自然的说法"
+      : "AI 只回应内容和继续追问";
+  }
+}
+
 function markActiveSubtitle() {
-  if (captionMode === "none") return;
   subtitleList.querySelectorAll(".subtitle-line").forEach((row) => {
     row.classList.toggle("is-active", Number(row.dataset.index) === activeIndex);
   });
@@ -266,7 +433,16 @@ function updateCaption() {
     return;
   }
   const text = visibleText(subtitles[activeIndex]);
-  currentCaption.textContent = text || "字幕已隐藏";
+  if (text) {
+    currentCaption.textContent = text;
+  } else if (showChinese) {
+    currentCaption.textContent =
+      currentTranslationStatus === "pending" || currentTranslationStatus === "running"
+        ? "中文字幕正在生成"
+        : "暂无中文字幕";
+  } else {
+    currentCaption.textContent = "字幕已隐藏";
+  }
   updatePlaybackProgress();
 }
 
@@ -357,7 +533,7 @@ function updateTranslationStatus(video = {}) {
   if (!translationStatus) return;
 
   const total = Number(video.chinese_translation_total || subtitles.length || 0);
-  const translated = Number(video.chinese_translation_count || subtitles.filter((line) => line.zh).length);
+  const translated = Number(video.chinese_translation_count || translatedSubtitleCount());
   const hasChinese = translated > 0 || hasChineseSubtitles();
 
   if (!currentVideoId || !total || (hasChinese && currentTranslationStatus === "complete")) {
@@ -388,10 +564,10 @@ function updateTranslationStatus(video = {}) {
     return;
   }
 
-  if (!hasChinese) {
+  if (!hasChinese && (captionMode === "zh" || captionMode === "both")) {
     translationStatus.hidden = false;
-    translationStatus.dataset.state = "pending";
-    translationStatus.textContent = "这个视频暂无中文字幕，正在尝试生成。";
+    translationStatus.dataset.state = "idle";
+    translationStatus.textContent = "这个视频暂无中文字幕。点击中文或双语后，会用 AI Builder 生成并保存。";
     return;
   }
 
@@ -412,6 +588,19 @@ async function refreshTranslationStatus() {
       chinese_translation_total: result.total,
       chinese_translation_count: result.translated,
     });
+
+    const localTranslated = translatedSubtitleCount();
+    if (
+      (currentTranslationStatus === "pending" || currentTranslationStatus === "running") &&
+      result.translated > localTranslated
+    ) {
+      const loaded = await apiFetch(`/videos/${currentVideoId}`);
+      subtitles = loaded.subtitles || subtitles;
+      currentTranslationStatus = loaded.chinese_translation_status || currentTranslationStatus;
+      currentTranslationError = loaded.chinese_translation_error || "";
+      renderSubtitles();
+      updateTranslationStatus(loaded);
+    }
 
     if (currentTranslationStatus === "complete" || currentTranslationStatus === "partial") {
       const loaded = await apiFetch(`/videos/${currentVideoId}`);
@@ -441,6 +630,59 @@ function startTranslationPolling(video = {}) {
   if (status !== "pending" && status !== "running") return;
   translationPollTimer = window.setInterval(refreshTranslationStatus, 4000);
   window.setTimeout(refreshTranslationStatus, 1200);
+}
+
+async function ensureChineseSubtitles() {
+  if (!currentVideoId) {
+    updateTranslationStatus();
+    return;
+  }
+
+  const hasAllChinese = subtitles.length > 0 && translatedSubtitleCount() >= subtitles.length;
+  if (hasAllChinese && currentTranslationStatus === "complete") {
+    updateTranslationStatus();
+    return;
+  }
+
+  if (currentTranslationStatus === "pending" || currentTranslationStatus === "running") {
+    startTranslationPolling({
+      chinese_translation_status: currentTranslationStatus,
+      chinese_translation_error: currentTranslationError,
+      chinese_translation_total: subtitles.length,
+      chinese_translation_count: translatedSubtitleCount(),
+    });
+    return;
+  }
+
+  try {
+    showSaveToast("正在生成中文字幕", { sticky: true, variant: "loading" });
+    const result = await apiFetch(`/videos/${currentVideoId}/translate-subtitles`, {
+      method: "POST",
+      body: JSON.stringify({
+        focus_index: activeIndex,
+        window_size: 40,
+      }),
+    });
+    currentTranslationStatus = result.status || "pending";
+    currentTranslationError = result.error || "";
+    renderSubtitles();
+    startTranslationPolling({
+      chinese_translation_status: currentTranslationStatus,
+      chinese_translation_error: currentTranslationError,
+      chinese_translation_total: result.total,
+      chinese_translation_count: result.translated,
+    });
+  } catch (error) {
+    currentTranslationStatus = "failed";
+    currentTranslationError = error.message;
+    updateTranslationStatus({
+      chinese_translation_status: currentTranslationStatus,
+      chinese_translation_error: currentTranslationError,
+      chinese_translation_total: subtitles.length,
+      chinese_translation_count: translatedSubtitleCount(),
+    });
+    showSaveToast("中文字幕生成失败", { variant: "error" });
+  }
 }
 
 async function saveSelectedExpression() {
@@ -557,6 +799,10 @@ function renderCards() {
     empty.innerHTML = "<strong>还没有表达卡片</strong><p>选中字幕里的词、短语或句子，可以保存进表达库。</p>";
     cardList.append(empty);
     cardCount.textContent = "已保存 0 条";
+    if (toggleLibraryChineseButton) {
+      toggleLibraryChineseButton.textContent = hideLibraryChinese ? "显示中文" : "隐藏中文";
+      toggleLibraryChineseButton.classList.toggle("is-active", hideLibraryChinese);
+    }
     return;
   }
 
@@ -569,6 +815,8 @@ function renderCards() {
 
     const meaning = document.createElement("p");
     meaning.textContent = card.chinese_meaning || card.context;
+    meaning.className = "card-meaning";
+    meaning.hidden = hideLibraryChinese;
 
     const meta = document.createElement("div");
     meta.className = "card-meta";
@@ -578,6 +826,10 @@ function renderCards() {
     cardList.append(item);
   });
   cardCount.textContent = `已保存 ${cards.length} 条`;
+  if (toggleLibraryChineseButton) {
+    toggleLibraryChineseButton.textContent = hideLibraryChinese ? "显示中文" : "隐藏中文";
+    toggleLibraryChineseButton.classList.toggle("is-active", hideLibraryChinese);
+  }
 }
 
 function appendMessage(role, text) {
@@ -669,7 +921,7 @@ async function startVoiceInput() {
         statusText.textContent = chatText.value.trim()
           ? "语音已转成文字，可以发送给 AI。"
           : "没有识别到内容，可以再试一次。";
-        chatText.placeholder = "输入你想和 AI 讨论的内容";
+        chatText.placeholder = coachModes[currentCoachMode]?.placeholder || "输入你想和 AI 讨论的内容";
         chatText.focus();
       } catch (error) {
         chatText.placeholder = "语音转文字失败，请重试或直接输入文字。";
@@ -714,12 +966,13 @@ function renderYoutubeIframe(videoId, options = {}) {
     rel: "0",
     modestbranding: "1",
     controls: "0",
-    cc_load_policy: "0",
-    disablekb: "1",
-    fs: "0",
-    iv_load_policy: "3",
-    origin: window.location.origin,
-  });
+      cc_load_policy: "0",
+      disablekb: "1",
+      fs: "0",
+      iv_load_policy: "3",
+      showinfo: "0",
+      origin: window.location.origin,
+    });
   if (options.autoplay) params.set("autoplay", "1");
   if (Number(options.startSeconds) > 0) {
     params.set("start", String(Math.floor(Number(options.startSeconds))));
@@ -729,8 +982,7 @@ function renderYoutubeIframe(videoId, options = {}) {
       id="youtubePlayerFrame"
       title="YouTube video player"
       src="https://www.youtube.com/embed/${encodeURIComponent(videoId)}?${params.toString()}"
-      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-      allowfullscreen
+      allow="autoplay; encrypted-media; picture-in-picture"
     ></iframe>
   `;
 }
@@ -847,9 +1099,9 @@ function setCurrentVideo(video) {
   videoChannel.textContent = video.channel;
   videoDuration.textContent = video.duration;
   statusText.textContent = `已载入 ${subtitles.length} 条字幕，点击任意字幕即可跳转播放。`;
-  chatLog.replaceChildren();
-  appendMessage("ai", "你可以先概述视频主要内容，说说你学到了什么，AI 会围绕你的回答继续和你交流。");
+  setCoachMode(currentCoachMode, { resetChat: true });
   renderSubtitles();
+  renderVocabularyPanel();
   startTranslationPolling(video);
   setupYoutubePlayer(video);
 }
@@ -908,6 +1160,7 @@ async function loadInitialData() {
     renderCards();
     renderHistory([]);
     renderSubtitles();
+    renderVocabularyPanel();
     updateTranslationStatus();
     statusText.textContent = "当前打开的是静态文件。请使用线上地址：https://tubeloop.ai-builders.space/";
     return;
@@ -920,6 +1173,7 @@ async function loadInitialData() {
     : "当前使用 mock fallback：未检测到 builder token。";
   await Promise.all([loadCards(), loadHistory()]);
   renderSubtitles();
+  renderVocabularyPanel();
 }
 
 document.querySelector("#importForm").addEventListener("submit", async (event) => {
@@ -938,26 +1192,31 @@ document.querySelector("#importForm").addEventListener("submit", async (event) =
     });
     setCurrentVideo(video);
     await Promise.all([loadCards(), loadHistory()]);
-    const translationStatusValue = video.chinese_translation_status || "";
-    showSaveToast(
-      translationStatusValue === "pending" || translationStatusValue === "running"
-        ? "载入成功，正在生成中文字幕"
-        : "载入成功",
-      { variant: "success" },
-    );
+    showSaveToast("载入成功", { variant: "success" });
   } catch (error) {
     statusText.textContent = error.message;
     showSaveToast("载入失败", { variant: "error" });
   }
 });
 
-document.querySelectorAll(".chip").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".chip").forEach((item) => item.classList.remove("is-active"));
-    button.classList.add("is-active");
-    captionMode = button.dataset.caption;
-    renderSubtitles();
-  });
+languageCycleButton?.addEventListener("click", async () => {
+  const nextMode = captionMode === "both" ? "en" : captionMode === "en" ? "zh" : "both";
+  showEnglish = nextMode === "en" || nextMode === "both";
+  showChinese = nextMode === "zh" || nextMode === "both";
+  syncCaptionMode();
+  renderSubtitles();
+  updateTranslationStatus();
+  if (showChinese) {
+    await ensureChineseSubtitles();
+  }
+});
+
+hideCaptionButton?.addEventListener("click", () => {
+  showEnglish = false;
+  showChinese = false;
+  syncCaptionMode();
+  renderSubtitles();
+  updateTranslationStatus();
 });
 
 document.querySelector("#prevLine").addEventListener("click", () =>
@@ -966,10 +1225,6 @@ document.querySelector("#prevLine").addEventListener("click", () =>
 document.querySelector("#nextLine").addEventListener("click", () =>
   setActiveLine(activeIndex + 1, { seek: true, play: isPlaying }),
 );
-
-document.querySelector("#hideCaptionToggle").addEventListener("change", (event) => {
-  currentCaption.classList.toggle("is-hidden", event.target.checked);
-});
 
 speedRange.addEventListener("input", (event) => {
   const speed = `${Number(event.target.value).toFixed(2).replace(/\.00$/, "").replace(/0$/, "")}x`;
@@ -1053,7 +1308,11 @@ document.querySelector("#chatForm").addEventListener("submit", (event) => {
   chatText.value = "";
   apiFetch("/chat", {
     method: "POST",
-    body: JSON.stringify({ video_id: currentVideoId, message: text }),
+    body: JSON.stringify({
+      video_id: currentVideoId,
+      message: text,
+      correct_expression: shouldCorrectExpression,
+    }),
   })
     .then((message) => appendMessage("ai", message.text))
     .catch((error) => appendMessage("ai", error.message));
@@ -1159,11 +1418,44 @@ document.querySelectorAll(".console-tab").forEach((button) => {
     document.querySelectorAll(".console-panel").forEach((item) => item.classList.remove("is-active"));
     button.classList.add("is-active");
     document.querySelector(`#${button.dataset.panel}Panel`).classList.add("is-active");
+    if (button.dataset.panel === "vocabulary") {
+      renderVocabularyPanel();
+    }
   });
 });
+
+vocabFilterButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    currentVocabThreshold = Number(button.dataset.vocabThreshold);
+    renderVocabularyPanel();
+  });
+});
+
+coachModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setCoachMode(button.dataset.coachMode, { resetChat: true, setStarter: true });
+    chatText?.focus();
+  });
+});
+
+correctionOptionButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setCoachCorrection(button.dataset.correction === "true");
+    chatText?.focus();
+  });
+});
+
+toggleLibraryChineseButton?.addEventListener("click", () => {
+  hideLibraryChinese = !hideLibraryChinese;
+  renderCards();
+});
+
+setCoachCorrection(shouldCorrectExpression);
+setCoachMode(currentCoachMode, { resetChat: true, setStarter: true });
 
 loadInitialData().catch((error) => {
   statusText.textContent = error.message;
   renderSubtitles();
+  renderVocabularyPanel();
   renderCards();
 });
