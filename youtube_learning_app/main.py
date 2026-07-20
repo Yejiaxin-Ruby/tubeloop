@@ -28,6 +28,7 @@ DB_PATH = Path(
     os.getenv("APP_DB_PATH", str(Path(__file__).with_name("youtube_learning.sqlite3"))),
 ).expanduser()
 APP_PORT = int(os.getenv("PORT", "8000"))
+APP_VERSION = "2026.07.20.1"
 MOCK_URL = "https://www.youtube.com/watch?v=mock-english-thinking"
 AI_BUILDER_BASE_URL = "https://space.ai-builders.com/backend/v1"
 AI_BUILDER_CHAT_MODEL = "gpt-5"
@@ -903,6 +904,11 @@ def translate_caption_lines(lines: list[dict[str, Any]]) -> list[str]:
 def translate_caption_chunk(lines: list[dict[str, Any]]) -> list[str]:
     if not lines:
         return []
+    translation_models = [
+        model.strip()
+        for model in os.getenv("AI_BUILDER_TRANSLATION_MODELS", "deepseek,deepseek-v4-flash,gpt-5").split(",")
+        if model.strip()
+    ]
     if len(lines) == 1:
         try:
             return [
@@ -915,17 +921,13 @@ def translate_caption_chunk(lines: list[dict[str, Any]]) -> list[str]:
                         {"role": "user", "content": str(lines[0]["text"])},
                     ],
                     max_tokens=220,
+                    model_candidates=translation_models,
                 ).strip(),
             ]
         except Exception as error:
             print(f"[single subtitle translation failed] {type(error).__name__}: {error}", flush=True)
             return [""]
 
-    translation_models = [
-        model.strip()
-        for model in os.getenv("AI_BUILDER_TRANSLATION_MODELS", "deepseek,deepseek-v4-flash,gpt-5").split(",")
-        if model.strip()
-    ]
     numbered = "\n".join(
         f"{index + 1}. {line['text']}"
         for index, line in enumerate(lines)
@@ -1048,12 +1050,20 @@ def generate_chinese_subtitles_task(
         ordered_rows[chunk_start : chunk_start + chunk_size]
         for chunk_start in range(0, len(ordered_rows), chunk_size)
     ]
-    max_workers = min(4, max(1, len(chunks)))
+    # Keep translation traffic modest so one video does not overwhelm the API.
+    max_workers = min(2, max(1, len(chunks)))
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(translate_rows_chunk, chunk) for chunk in chunks]
         for future in as_completed(futures):
-            translated_pairs = future.result()
+            try:
+                translated_pairs = future.result()
+            except Exception as error:
+                print(
+                    f"[subtitle translation chunk failed] {type(error).__name__}: {error}",
+                    flush=True,
+                )
+                continue
             if not translated_pairs:
                 continue
             with connect() as db:
@@ -1934,7 +1944,12 @@ def get_config() -> dict[str, Any]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": APP_VERSION}
+
+
+@app.get("/api/version")
+def get_version() -> dict[str, str]:
+    return {"version": APP_VERSION}
 
 
 @app.post("/api/videos/import")

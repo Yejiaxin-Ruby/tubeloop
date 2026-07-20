@@ -144,14 +144,13 @@ function formatTime(totalSeconds) {
 }
 
 function getPlaybackBounds() {
-  if (!subtitles.length) return { current: 0, total: 0 };
   const current = getCurrentPlaybackSeconds();
-  const lastLine = subtitles[subtitles.length - 1];
+  const lastLine = subtitles[subtitles.length - 1] || null;
   const playerDuration =
     youtubePlayerReady && youtubePlayer?.getDuration ? Number(youtubePlayer.getDuration()) : 0;
   const total =
     playerDuration ||
-    getLineEndSeconds(lastLine) ||
+    (lastLine ? getLineEndSeconds(lastLine) : 0) ||
     current ||
     1;
   return { current, total };
@@ -331,7 +330,7 @@ async function renderVocabularyPanel() {
   });
 
   vocabList.replaceChildren();
-  if (!currentVideoId) {
+  if (!currentVideoId && !subtitles.length) {
     vocabResultCount.textContent = "0 个";
     const empty = document.createElement("div");
     empty.className = "vocab-empty";
@@ -350,9 +349,8 @@ async function renderVocabularyPanel() {
   try {
     let result;
     try {
-      result = await apiFetch(
-        `/videos/${currentVideoId}/vocabulary?threshold=${threshold}&limit=30`,
-      );
+      if (!currentVideoId) throw new Error("使用当前字幕分析");
+      result = await apiFetch(`/videos/${currentVideoId}/vocabulary?threshold=${threshold}&limit=30`);
     } catch (error) {
       if (!subtitles.length) throw error;
       result = await apiFetch("/vocabulary/analyze", {
@@ -1005,6 +1003,40 @@ function renderYoutubeIframe(videoId, options = {}) {
   `;
 }
 
+function extractYoutubeVideoId(value) {
+  const input = String(value || "").trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(input)) return input;
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") return url.pathname.split("/").filter(Boolean)[0] || "";
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "music.youtube.com") {
+      if (url.pathname === "/watch") return url.searchParams.get("v") || "";
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (["shorts", "embed", "live"].includes(parts[0])) return parts[1] || "";
+    }
+  } catch (error) {
+    return "";
+  }
+  return "";
+}
+
+function showPendingVideo(videoId) {
+  if (!videoId) return;
+  currentVideoId = null;
+  subtitles = [];
+  currentTranslationStatus = "idle";
+  currentTranslationError = "";
+  activeIndex = 0;
+  videoTitle.textContent = "正在载入视频";
+  videoChannel.textContent = "播放器已就绪，正在读取字幕";
+  videoDuration.textContent = "";
+  renderSubtitles();
+  renderVocabularyPanel();
+  updateTranslationStatus();
+  setupYoutubePlayer({ youtube_video_id: videoId });
+}
+
 function loadYoutubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (youtubeApiPromise) return youtubeApiPromise;
@@ -1201,19 +1233,24 @@ document.querySelector("#importForm").addEventListener("submit", async (event) =
     window.location.href = publicAppUrl;
     return;
   }
+  const submittedUrl = videoUrlInput.value.trim();
+  const previewVideoId = extractYoutubeVideoId(submittedUrl);
+  if (previewVideoId) showPendingVideo(previewVideoId);
   try {
     statusText.textContent = "正在读取 YouTube 视频和字幕，这可能需要几十秒...";
     showSaveToast("视频正在加载中", { sticky: true, variant: "loading" });
     const video = await apiFetch("/videos/import", {
       method: "POST",
-      body: JSON.stringify({ url: videoUrlInput.value }),
+      body: JSON.stringify({ url: submittedUrl }),
     });
     setCurrentVideo(video);
     await Promise.all([loadCards(), loadHistory()]);
     showSaveToast("载入成功", { variant: "success" });
   } catch (error) {
-    statusText.textContent = error.message;
-    showSaveToast("载入失败", { variant: "error" });
+    statusText.textContent = previewVideoId
+      ? `视频可以播放，但字幕读取失败：${error.message}`
+      : error.message;
+    showSaveToast(previewVideoId ? "视频已打开，字幕载入失败" : "载入失败", { variant: "error" });
   }
 });
 
